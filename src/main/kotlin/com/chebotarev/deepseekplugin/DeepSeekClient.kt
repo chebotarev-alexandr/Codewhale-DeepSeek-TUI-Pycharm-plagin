@@ -56,7 +56,7 @@ class DeepSeekClient(
      */
     fun sendTurn(threadId: String, prompt: String): String {
         val body = JsonObject()
-        body.addProperty("content", prompt)
+        body.addProperty("prompt", prompt)
         val req = Request.Builder()
             .url("$baseUrl/v1/threads/$threadId/turns")
             .post(body.toString().toRequestBody(json))
@@ -64,8 +64,10 @@ class DeepSeekClient(
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw RuntimeException("sendTurn failed: HTTP ${resp.code}")
             val data = JsonParser.parseString(resp.body?.string()).asJsonObject
-            // The API may return { id, ... } or { turn_id, ... } — tolerate both.
-            return data.get("id")?.asString
+            // The API may return { thread, turn } — tolerate both shapes.
+            val turn = data.get("turn")?.asJsonObject
+            return turn?.get("id")?.asString
+                ?: data.get("id")?.asString
                 ?: data.get("turn_id")?.asString
                 ?: ""
         }
