@@ -407,46 +407,78 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
     // ---- approvals ----
 
     private fun addApprovalRow(approvalId: String, desc: String) {
-        val label = JLabel("<html><span style=\"color:#e6a23c;\">🔒 Разрешить?</span><br>" +
-            "<span style=\"color:#e8e8e8;\">" + escape(desc) + "</span></html>")
+        val html = "<b style=\"color:#e6a23c;\">🔒 Разрешить?</b><br>" +
+            "<span style=\"color:#e8e8e8;\">" + escape(desc) + "</span>"
+
+        // Wrapping text pane, measured like the message bubbles so the
+        // description wraps at the bubble width instead of overflowing.
+        val pane = JTextPane().apply {
+            editorKit = HTMLEditorKit()
+            isEditable = false
+            isOpaque = false
+            margin = JBUI.insets(2)
+        }
+        pane.text = "<html><body style=\"font-family:SansSerif;font-size:12pt;color:#e8e8e8;\">" +
+            html + "</body></html>"
+
+        val ins = pane.insets
+        val root = pane.ui.getRootView(pane)
+        root.setSize(100000f, 100000f)
+        val naturalW = root.getPreferredSpan(View.X_AXIS).toInt().coerceAtLeast(1)
+        val maxContentW = (bubbleMaxWidth() - ins.left - ins.right).coerceAtLeast(60)
+        val contentW = minOf(naturalW, maxContentW)
+        root.setSize(contentW.toFloat(), 100000f)
+        val contentH = root.getPreferredSpan(View.Y_AXIS).toInt().coerceAtLeast(1)
+        pane.preferredSize = Dimension(contentW + ins.left + ins.right, contentH + ins.top + ins.bottom)
+        pane.maximumSize = Dimension(pane.preferredSize.width, Int.MAX_VALUE)
+
         val allow = JButton("Разрешить")
         val allowAll = JButton("Разрешить всё")
         val deny = JButton("Запретить")
 
-        val bar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 4)).apply {
-            isOpaque = true
-            background = Color(44, 40, 28)
-        }
-        bar.add(allow)
-        bar.add(allowAll)
-        bar.add(deny)
-
-        val row = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        val bar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
             isOpaque = false
-            alignmentX = Component.LEFT_ALIGNMENT
+            add(allow)
+            add(allowAll)
+            add(deny)
         }
-        row.add(label)
-        row.add(bar)
+
+        val bubble = object : JPanel(BorderLayout()) {
+            override fun paintComponent(g: Graphics?) {
+                val g2 = g!!.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = Color(44, 40, 28)
+                g2.fillRoundRect(0, 0, width, height, 16, 16)
+                g2.dispose()
+            }
+        }.apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(8, 12, 8, 12)
+            add(pane, BorderLayout.CENTER)
+            add(bar, BorderLayout.SOUTH)
+            maximumSize = Dimension(preferredSize.width, Int.MAX_VALUE)
+        }
+
+        val row = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(bubble, BorderLayout.WEST)
+        }
         row.maximumSize = Dimension(Int.MAX_VALUE, row.preferredSize.height)
 
         fun resolve(decision: String, remember: Boolean) {
             allow.isEnabled = false
             allowAll.isEnabled = false
             deny.isEnabled = false
-            label.text = "<html><span style=\"color:#9aa4b2;\">⏳ Отправляю решение…</span></html>"
+            val color = if (decision == "allow") "#6ccb6c" else "#ff7b7b"
+            val mark = if (decision == "allow") "✓ Разрешено" else "✗ Запрещено"
+            pane.text = "<html><body style=\"font-family:SansSerif;font-size:12pt;color:$color;\">" +
+                escape(mark) + "</body></html>"
             ApplicationManager.getApplication().executeOnPooledThread {
                 val result = runCatching { client.resolveApproval(approvalId, decision, remember) }
                 SwingUtilities.invokeLater {
-                    result.onSuccess {
-                        label.text = if (decision == "allow") {
-                            "<html><span style=\"color:#6ccb6c;\">✓ Разрешено</span></html>"
-                        } else {
-                            "<html><span style=\"color:#ff7b7b;\">✗ Запрещено</span></html>"
-                        }
-                    }.onFailure { err ->
-                        label.text = "<html><span style=\"color:#ff7b7b;\">⚠ Ошибка: " +
-                            escape(err.message ?: "неизвестно") + "</span></html>"
+                    result.onFailure { err ->
+                        pane.text = "<html><body style=\"font-family:SansSerif;font-size:12pt;color:#ff7b7b;\">" +
+                            escape("⚠ Ошибка: " + (err.message ?: "неизвестно")) + "</body></html>"
                     }
                 }
             }
