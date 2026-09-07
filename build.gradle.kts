@@ -30,7 +30,9 @@ tasks {
 
     patchPluginXml {
         sinceBuild.set("241")
-        // No untilBuild cap — allow installation on any newer IDE build.
+        // Empty string = do NOT emit until-build at all (no upper bound).
+        // Otherwise gradle-intellij-plugin defaults until-build to since-build + ".*".
+        untilBuild.set("")
         changeNotes.set("""
             MVP: tool window + send open file/selection to Codewhale runtime API.
         """.trimIndent())
