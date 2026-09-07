@@ -1,5 +1,6 @@
 package com.chebotarev.deepseekplugin
 
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import okhttp3.MediaType.Companion.toMediaType
@@ -160,6 +161,7 @@ class DeepSeekClient(
         onAnswerDelta: (String) -> Unit,
         onReasoningDelta: (String) -> Unit,
         onApprovalRequired: (String, String) -> Unit,
+        onFileChange: (path: String?, detail: String?, summary: String?) -> Unit = { _, _, _ -> },
         onEvent: (String) -> Unit,
     ): Long {
         var lastSeq = sinceSeq
@@ -199,6 +201,16 @@ class DeepSeekClient(
                                         val id = approvalIdFrom(obj, p)
                                         if (id != null) onApprovalRequired(id, approvalDescFrom(p))
                                     }
+                                    "item.completed" -> {
+                                        val item = p?.getAsJsonObject("item")
+                                        if (item?.get("kind")?.asString == "file_change") {
+                                            onFileChange(
+                                                filePathFrom(item.getAsJsonObject("metadata")),
+                                                detailTextFrom(item.get("detail")),
+                                                item.get("summary")?.takeIf { it.isJsonPrimitive }?.asString,
+                                            )
+                                        }
+                                    }
                                     "turn.completed", "turn.failed", "turn.interrupted" ->
                                         done = true
                                 }
@@ -210,6 +222,53 @@ class DeepSeekClient(
             }
         }
         return lastSeq
+    }
+
+    /** `detail` is a string on the wire but may also arrive as an `edits[]` array. */
+    private fun detailTextFrom(node: JsonElement?): String? = when {
+        node == null || node.isJsonNull -> null
+        node.isJsonPrimitive -> node.asString
+        else -> node.toString()
+    }
+
+    private val PATH_KEYS = listOf("path", "file_path", "filePath", "file", "target_file")
+
+    /**
+     * Pull a file path out of item metadata. The runtime puts tool arguments in
+     * `metadata.tool_input` as a JSON string, so a direct `metadata.path` lookup
+     * finds nothing for the file-change items that most want an Open button.
+     * Everything here is untrusted model output: parse defensively.
+     */
+    private fun filePathFrom(metadata: JsonObject?): String? {
+        if (metadata == null) return null
+        for (k in PATH_KEYS) {
+            val v = metadata.get(k)
+            if (v?.isJsonPrimitive == true && v.asJsonPrimitive.isString) {
+                val s = v.asString.trim()
+                if (s.isNotEmpty()) return s
+            }
+        }
+        for (k in listOf("tool_input", "toolInput", "input", "arguments")) {
+            val raw = metadata.get(k) ?: continue
+            val jsonStr = when {
+                raw.isJsonPrimitive && raw.asJsonPrimitive.isString -> raw.asString
+                raw.isJsonObject -> raw.toString()
+                else -> null
+            } ?: continue
+            runCatching {
+                val parsed = JsonParser.parseString(jsonStr)
+                if (parsed.isJsonObject) {
+                    for (pk in PATH_KEYS) {
+                        val pv = parsed.asJsonObject.get(pk)
+                        if (pv?.isJsonPrimitive == true && pv.asJsonPrimitive.isString) {
+                            val s = pv.asString.trim()
+                            if (s.isNotEmpty()) return s
+                        }
+                    }
+                }
+            }
+        }
+        return null
     }
 
     private fun approvalIdFrom(obj: JsonObject, p: JsonObject?): String? {

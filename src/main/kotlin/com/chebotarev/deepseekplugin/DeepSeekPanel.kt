@@ -2,7 +2,9 @@ package com.chebotarev.deepseekplugin
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
@@ -498,6 +500,93 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         }
     }
 
+    // ---- file changes ----
+
+    private fun addFileChangeRow(path: String?, detail: String?, summary: String?) {
+        SwingUtilities.invokeLater {
+            val title = path ?: (summary ?: "изменение файла")
+            val body = detail ?: ""
+            val html = "<b style=\"color:#e6a23c;\">✎ " + escape(title) + "</b><br>" +
+                (if (body.isNotEmpty()) MarkdownRenderer.renderDiff(body) else "")
+
+            val pane = JTextPane().apply {
+                editorKit = HTMLEditorKit()
+                isEditable = false
+                isOpaque = false
+                margin = JBUI.insets(2)
+            }
+            pane.text = "<html><body style=\"font-family:SansSerif;font-size:11pt;color:#e8e8e8;\">" +
+                html + "</body></html>"
+
+            val ins = pane.insets
+            val root = pane.ui.getRootView(pane)
+            root.setSize(100000f, 100000f)
+            val naturalW = root.getPreferredSpan(View.X_AXIS).toInt().coerceAtLeast(1)
+            val maxContentW = (bubbleMaxWidth() - ins.left - ins.right).coerceAtLeast(60)
+            val contentW = minOf(naturalW + 8, maxContentW)
+            root.setSize(contentW.toFloat(), 100000f)
+            val contentH = root.getPreferredSpan(View.Y_AXIS).toInt().coerceAtLeast(1)
+            pane.preferredSize = Dimension(contentW + ins.left + ins.right, contentH + ins.top + ins.bottom)
+            pane.maximumSize = Dimension(pane.preferredSize.width, Int.MAX_VALUE)
+
+            val bar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply { isOpaque = false }
+            if (path != null) {
+                val open = JButton("Открыть файл")
+                open.addActionListener { openFile(path) }
+                bar.add(open)
+            }
+
+            val bubble = object : JPanel(BorderLayout()) {
+                override fun paintComponent(g: Graphics?) {
+                    val g2 = g!!.create() as Graphics2D
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                    g2.color = Color(40, 44, 54)
+                    g2.fillRoundRect(0, 0, width, height, 16, 16)
+                    g2.dispose()
+                }
+            }.apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(8, 12, 8, 12)
+                add(pane, BorderLayout.CENTER)
+                add(bar, BorderLayout.SOUTH)
+                maximumSize = Dimension(preferredSize.width, Int.MAX_VALUE)
+            }
+
+            val row = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                add(bubble, BorderLayout.WEST)
+            }
+            row.maximumSize = Dimension(Int.MAX_VALUE, row.preferredSize.height)
+
+            chat.add(row)
+            chat.add(Box.createVerticalStrut(6))
+            chat.revalidate()
+            chat.repaint()
+            SwingUtilities.invokeLater {
+                val barV = scrollPane.verticalScrollBar
+                barV.value = barV.maximum
+            }
+        }
+    }
+
+    private fun openFile(path: String) {
+        val base = project.basePath
+        val file: File? = when {
+            File(path).isAbsolute -> File(path)
+            base != null -> File(base, path)
+            else -> null
+        }
+        if (file == null || !file.exists()) {
+            addSystemNote("Файл не найден: " + path)
+            return
+        }
+        ApplicationManager.getApplication().invokeLater {
+            val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
+            if (vf != null) FileEditorManager.getInstance(project).openFile(vf, true)
+            else addSystemNote("Не удалось открыть: " + path)
+        }
+    }
+
     // ---- approvals ----
 
     private fun addApprovalRow(approvalId: String, desc: String) {
@@ -660,6 +749,9 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
                     },
                     onApprovalRequired = { id, desc ->
                         SwingUtilities.invokeLater { addApprovalRow(id, desc) }
+                    },
+                    onFileChange = { path, detail, summary ->
+                        addFileChangeRow(path, detail, summary)
                     },
                     onEvent = { event -> logRaw(event) },
                 )

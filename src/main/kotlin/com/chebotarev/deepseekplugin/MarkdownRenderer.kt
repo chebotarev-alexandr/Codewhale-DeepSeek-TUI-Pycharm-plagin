@@ -56,6 +56,14 @@ object MarkdownRenderer {
         return html
     }
 
+    /**
+     * Renders a standalone diff/patch (e.g. a `file_change` item) with the same
+     * line coloring as fenced ```diff blocks. Returns a bare HTML fragment.
+     */
+    fun renderDiff(code: String): String =
+        "<div style=\"background-color:#1e1e1e;color:#e8e8e8;padding:8px;margin:0;\">" +
+            highlightDiff(code).replace("\n", "<br>") + "</div>"
+
     /** Minimal keyword/string/comment/number highlighting for common languages. */
     private fun highlight(code: String, lang: String): String {
         if (lang == "diff" || lang == "patch") return highlightDiff(code)
