@@ -69,6 +69,10 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         val prompt = promptField.text.trim()
         if (prompt.isEmpty()) return
 
+        // Build the context on the EDT (this method runs from a button/Enter),
+        // because reading the editor selection/file requires EDT or a read action.
+        val fullPrompt = contextProvider.buildPrompt(prompt, attachFile.isSelected)
+
         ApplicationManager.getApplication().executeOnPooledThread {
             setBusy(true)
             try {
@@ -77,8 +81,6 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
                         "Start it with:  codewhale app-server --http --insecure-no-auth\n\n")
                     return@executeOnPooledThread
                 }
-
-                val fullPrompt = contextProvider.buildPrompt(prompt, attachFile.isSelected)
 
                 if (threadId == null) {
                     threadId = client.createThread(model = null)
