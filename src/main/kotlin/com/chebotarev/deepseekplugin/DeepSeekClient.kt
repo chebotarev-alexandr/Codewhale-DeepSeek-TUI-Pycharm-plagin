@@ -10,10 +10,10 @@ import okhttp3.Response
 import java.util.concurrent.TimeUnit
 
 /**
- * Minimal HTTP client for the DeepSeek-TUI Runtime API.
+ * Minimal HTTP client for the Codewhale (formerly DeepSeek-TUI) Runtime API.
  *
- * Expects `deepseek serve --http` running on localhost:7878 (default port).
- * See https://github.com/Hmbown/DeepSeek-TUI/blob/main/docs/RUNTIME_API.md
+ * Expects `codewhale app-server --http` running on localhost:7878 (default).
+ * See https://github.com/Hmbown/CodeWhale/blob/main/docs/RUNTIME_API.md
  */
 class DeepSeekClient(
     private val host: String = "127.0.0.1",

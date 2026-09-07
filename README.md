@@ -1,20 +1,33 @@
-# DeepSeek-TUI PyCharm Plugin
+# Codewhale PyCharm Plugin
 
 Минимальный плагин для PyCharm (Community), который связывает IDE с локально
-запущенным агентом [DeepSeek-TUI](https://github.com/Hmbown/DeepSeek-TUI).
+запущенным агентом [Codewhale](https://github.com/Hmbown/CodeWhale) (ранее —
+DeepSeek-TUI).
 
 Идея — как Claude Code в IDE: ты открываешь файл (или выделяешь фрагмент),
 пишешь запрос в панели, а открытый файл/выделение автоматически уходит
 агенту как контекст. При этом агент работает в workspace проекта и имеет
 доступ ко всем файлам, а не только к открытому.
 
+## Важно: DeepSeek-TUI переименован в Codewhale
+
+Проект тот же (автор Hmbown), но с версии v0.8.41 он называется `codewhale`,
+а старое имя `deepseek-tui` устарело. Подробности миграции:
+[docs/REBRAND.md](https://github.com/Hmbown/CodeWhale/blob/main/docs/REBRAND.md).
+
+- Бинарь `deepseek` → теперь `codewhale` (короткий `codew`)
+- Конфиг `~/.deepseek/` → `~/.codewhale/` (старое читается как fallback)
+- **Модели и API DeepSeek не изменились**: `DEEPSEEK_API_KEY`,
+  `deepseek-v4-pro` и т.д. работают как раньше
+- Runtime API тот же, что и раньше: `app-server --http` на `127.0.0.1:7878`
+
 ## Как это работает
 
 ```
-PyCharm (панель DeepSeek)
+PyCharm (панель Codewhale)
         │  HTTP + SSE (localhost:7878)
         ▼
-deepseek serve --http   ← сам DeepSeek-TUI, запущенный отдельно
+codewhale app-server --http   ← сам Codewhale, запущенный отдельно
         │
         ▼
 DeepSeek V4 (через твой API-ключ)
@@ -23,30 +36,35 @@ DeepSeek V4 (через твой API-ключ)
 Плагин НЕ запускает модель сам и НЕ хранит ключ. Он лишь:
 1. Читает открытый файл / выделение в редакторе
 2. Складывает их с твоим текстом в один запрос
-3. Шлёт его в Runtime API DeepSeek-TUI и стримит ответ обратно в панель
+3. Шлёт его в Runtime API Codewhale и стримит ответ обратно в панель
 
 ## Требования
 
 - **PyCharm Community 2024.1+** (собиралось и тестировалось на 2024.1.4)
 - **JDK 17** (нужен только для сборки плагина)
-- **DeepSeek-TUI** установлен и авторизован (см. ниже)
+- **Codewhale** установлен и авторизован (см. ниже)
 
-## Установка DeepSeek-TUI (macOS)
+## Установка Codewhale (macOS)
 
 ```bash
+# Рекомендованный путь — официальный установщик
+curl -fsSL https://codewhale.net/install.sh | sh
+"$HOME/.local/bin/codewhale" --version
+
+# Или через Homebrew
 brew tap Hmbown/deepseek-tui
-brew install deepseek-tui
-
-# авторизация (твой ключ DeepSeek API)
-deepseek auth set --provider deepseek --api-key "sk-..."
-
-# одноразовая инициализация (создаёт папки MCP/skills)
-deepseek-tui setup
+brew install codewhale
 ```
 
-> **Альтернативные провайдеры.** DeepSeek-TUI умеет и другие бэкенды:
-> NVIDIA NIM, Fireworks AI, self-hosted SGLang. Если используешь прокси или
-> OpenRouter — смотри `docs/CONFIGURATION.md` в репозитории DeepSeek-TUI.
+Авторизация (твой ключ DeepSeek API):
+
+```bash
+codewhale auth set --provider deepseek --api-key "sk-..."
+```
+
+> **Альтернативные провайдеры.** Codewhale умеет и другие бэкенды (NVIDIA NIM,
+> Fireworks AI, Alibaba Model Studio, self-hosted SGLang и др.). Если
+> используешь прокси или OpenRouter — смотри `docs/CONFIGURATION.md`.
 > Плагину это безразлично: он ходит только на локальный `localhost:7878`.
 
 ## Запуск сервера Runtime API
@@ -54,13 +72,17 @@ deepseek-tui setup
 Перед работой с плагином подними сервер (в отдельном терминале или фоном):
 
 ```bash
-deepseek serve --http          # слушает 127.0.0.1:7878 по умолчанию
+codewhale app-server --http --insecure-no-auth
 ```
 
-Проверка, что он жив:
+`--insecure-no-auth` отключает требование токена — безопасно для loopback
+(сервер слушает только `127.0.0.1`). Если хочешь с токеном — используй
+`--auth-token` / `CODEWHALE_RUNTIME_TOKEN`, но тогда плагину тоже нужен будет
+токен (в MVP он не поддерживается).
+
+Проверка, что сервер жив:
 
 ```bash
-deepseek doctor --json         # health-проверка установки
 curl http://127.0.0.1:7878/health
 ```
 
@@ -78,24 +100,24 @@ curl http://127.0.0.1:7878/health
 ### Способ 2 — из терминала
 
 ```bash
-# требуется JDK 17 и Gradle 8.x
-gradle buildPlugin
+# JDK 17 + Gradle 8.x (или использовать gradlew из репозитория)
+./gradlew buildPlugin
 ```
 
-Результат: `build/distributions/deepseek-tui-pycharm-<версия>.zip`
+Результат: `build/distributions/codewhale-pycharm-<версия>.zip`
 
 ### Установка zip в PyCharm
 
 1. PyCharm → Settings → Plugins → ⚙️ → **Install Plugin from Disk…**
-2. Выбери `build/distributions/deepseek-tui-pycharm-0.1.0.zip`
+2. Выбери `build/distributions/codewhale-pycharm-0.1.0.zip`
 3. Перезапусти PyCharm
 
 ## Использование
 
-1. Запусти `deepseek serve --http` (отдельный терминал).
+1. Запусти `codewhale app-server --http --insecure-no-auth` (отдельный терминал).
 2. В PyCharm открой файл проекта, с которым хочешь работать
    (или выдели нужный фрагмент).
-3. Справа открой панель **DeepSeek** (View → Tool Windows → DeepSeek).
+3. Справа открой панель **Codewhale** (View → Tool Windows → Codewhale).
 4. Введи запрос, оставь галочку **«Attach open file / selection»** включённой.
 5. Жми **Send** (или Enter в поле ввода).
 
@@ -104,7 +126,7 @@ gradle buildPlugin
 
 ## Что уже умеет (MVP)
 
-- Панель инструментов «DeepSeek» справа
+- Панель инструментов «Codewhale» справа
 - Отправка запроса + открытый файл / выделение как контекст
 - Стриминг ответа по мере генерации
 - Сквозной thread (история разговора в пределах открытого окна)
@@ -117,6 +139,7 @@ gradle buildPlugin
 - UI подтверждения действий (approval gates)
 - Настройки хоста/порта/модели через Settings
 - Выбор файлов из дерева проекта вручную
+- Поддержка auth-токена Runtime API
 
 ## Структура проекта
 
@@ -135,12 +158,13 @@ src/main/
 
 | Симптом | Причина / решение |
 |---|---|
-| «DeepSeek-TUI server not running» | Запусти `deepseek serve --http`, проверь `curl http://127.0.0.1:7878/health` |
+| «Codewhale server not running» | Запусти `codewhale app-server --http --insecure-no-auth`, проверь `curl http://127.0.0.1:7878/health` |
 | Плагин собрался, но панели нет | PyCharm < 2024.1 или неправильный JDK при сборке |
-| Ответ не стримится / обрывается | Проверь логи `deepseek serve --http`, что ключ валиден и есть баланс |
-| Ошибка при `gradle build` про `com.intellij.java` | Не менять `type.set("PC")` на другой; плагин заточен под PyCharm Community |
+| Ответ не стримится / обрывается | Проверь логи `app-server`, что ключ валиден и есть баланс |
+| 401/403 при запросах | Сервер запущен с требованием токена — перезапусти с `--insecure-no-auth` |
+| Ошибка при `gradle build` про `com.intellij.java` | Не менять `type.set("PC")`; плагин заточен под PyCharm Community |
 
 ## Лицензия
 
-MIT. Основан на открытом Runtime API DeepSeek-TUI.
-Плагин не аффилирован с DeepSeek Inc. и с проектом DeepSeek-TUI.
+MIT. Основан на открытом Runtime API Codewhale.
+Плагин не аффилирован с Codewhale/Shannon Labs и с DeepSeek Inc.

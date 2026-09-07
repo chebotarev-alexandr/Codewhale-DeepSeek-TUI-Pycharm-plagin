@@ -73,8 +73,8 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
             setBusy(true)
             try {
                 if (!client.isServerUp()) {
-                    append("\n⚠ DeepSeek-TUI server not running.\n" +
-                        "Start it with:  deepseek serve --http\n\n")
+                    append("\n⚠ Codewhale server not running.\n" +
+                        "Start it with:  codewhale app-server --http --insecure-no-auth\n\n")
                     return@executeOnPooledThread
                 }
 
