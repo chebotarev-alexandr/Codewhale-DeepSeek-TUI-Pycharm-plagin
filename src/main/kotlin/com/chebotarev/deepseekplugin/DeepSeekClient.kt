@@ -6,11 +6,10 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
 import java.util.concurrent.TimeUnit
 
 /**
- * Minimal HTTP client for the Codewhale (formerly DeepSeek-TUI) Runtime API.
+ * HTTP client for the Codewhale (formerly DeepSeek-TUI) Runtime API.
  *
  * Expects `codewhale app-server --http` running on localhost:7878 (default).
  * See https://github.com/Hmbown/CodeWhale/blob/main/docs/RUNTIME_API.md
@@ -37,12 +36,12 @@ class DeepSeekClient(
     /**
      * Create a new thread. Returns the thread id, or throws on failure.
      *
-     * [workspace] anchors the agent to the project root so file edits land in
-     * the right place. [autoApprove] is enabled so approval-gated tools (file
-     * writes, shell) run without an interactive approval UI, which the MVP
-     * panel does not yet implement.
+     * [workspace] anchors the agent to the project root. [autoApprove] controls
+     * whether approval-gated tools (file edits, shell) run without asking:
+     * false = "Ask" posture, the turn pauses with an `approval.required` event
+     * and the client resolves it via [resolveApproval].
      */
-    fun createThread(model: String?, workspace: String?, autoApprove: Boolean = true): String {
+    fun createThread(model: String?, workspace: String?, autoApprove: Boolean = false): String {
         val body = JsonObject()
         model?.let { body.addProperty("model", it) }
         if (!workspace.isNullOrBlank()) body.addProperty("workspace", workspace)
@@ -59,9 +58,68 @@ class DeepSeekClient(
         }
     }
 
+    /** Toggle auto-approve on an existing thread (PATCH /v1/threads/{id}). */
+    fun patchAutoApprove(threadId: String, autoApprove: Boolean) {
+        val body = JsonObject()
+        body.addProperty("auto_approve", autoApprove)
+        val req = Request.Builder()
+            .url("$baseUrl/v1/threads/$threadId")
+            .patch(body.toString().toRequestBody(json))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw RuntimeException("patchThread failed: HTTP ${resp.code}")
+        }
+    }
+
     /**
-     * Send a user turn to a thread. Returns the turn id.
+     * Resolve a pending tool approval.
+     * [decision] is "allow" or "deny"; [remember] auto-applies the decision to
+     * subsequent matching approvals.
      */
+    fun resolveApproval(approvalId: String, decision: String, remember: Boolean = false) {
+        val body = JsonObject()
+        body.addProperty("decision", decision)
+        body.addProperty("remember", remember)
+        val req = Request.Builder()
+            .url("$baseUrl/v1/approvals/$approvalId")
+            .post(body.toString().toRequestBody(json))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw RuntimeException("resolveApproval failed: HTTP ${resp.code}")
+        }
+    }
+
+    /** Compact the conversation context (POST /v1/threads/{id}/compact). */
+    fun compactThread(threadId: String) {
+        val req = Request.Builder()
+            .url("$baseUrl/v1/threads/$threadId/compact")
+            .post("{}".toRequestBody(json))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw RuntimeException("compact failed: HTTP ${resp.code}")
+        }
+    }
+
+    /**
+     * Undo the last turn: forks the thread with the last turn removed. Returns
+     * the forked thread id (may differ from the original), or null if unknown.
+     */
+    fun undoThread(threadId: String): String? {
+        val body = JsonObject()
+        body.addProperty("depth", 0)
+        val req = Request.Builder()
+            .url("$baseUrl/v1/threads/$threadId/undo")
+            .post(body.toString().toRequestBody(json))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw RuntimeException("undo failed: HTTP ${resp.code}")
+            val data = JsonParser.parseString(resp.body?.string()).asJsonObject
+            return data.getAsJsonObject("thread")?.get("id")?.asString
+                ?: data.get("id")?.asString
+        }
+    }
+
+    /** Send a user turn to a thread. Returns the turn id. */
     fun sendTurn(threadId: String, prompt: String): String {
         val body = JsonObject()
         body.addProperty("prompt", prompt)
@@ -72,7 +130,6 @@ class DeepSeekClient(
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw RuntimeException("sendTurn failed: HTTP ${resp.code}")
             val data = JsonParser.parseString(resp.body?.string()).asJsonObject
-            // The API may return { thread, turn } — tolerate both shapes.
             val turn = data.get("turn")?.asJsonObject
             return turn?.get("id")?.asString
                 ?: data.get("id")?.asString
@@ -83,10 +140,13 @@ class DeepSeekClient(
 
     /**
      * Stream events for a thread over SSE, starting after [sinceSeq].
+     *
      * [onAnswerDelta] receives the assistant's actual answer text
-     * (payload.kind == "agent_message"). [onReasoningDelta] receives reasoning
-     * "thinking" text (payload.kind == "reasoning"), kept separate so the UI
-     * can show it collapsed. [onEvent] receives every raw event JSON.
+     * (payload.kind == "agent_message"); [onReasoningDelta] receives reasoning
+     * "thinking" text (payload.kind == "agent_reasoning").
+     * [onApprovalRequired] receives (approvalId, description) when a tool needs
+     * approval — the client must call [resolveApproval] to continue the turn.
+     * [onEvent] receives every raw event JSON for logging.
      *
      * Returns the last seen sequence number (cursor). Stops when the current
      * turn reaches a terminal state.
@@ -96,6 +156,7 @@ class DeepSeekClient(
         sinceSeq: Long,
         onAnswerDelta: (String) -> Unit,
         onReasoningDelta: (String) -> Unit,
+        onApprovalRequired: (String, String) -> Unit,
         onEvent: (String) -> Unit,
     ): Long {
         var lastSeq = sinceSeq
@@ -128,9 +189,12 @@ class DeepSeekClient(
                                             when (kind) {
                                                 "agent_reasoning" -> onReasoningDelta(delta)
                                                 "agent_message" -> onAnswerDelta(delta)
-                                                // tool_call / file_change / status carry no user-facing text
                                             }
                                         }
+                                    }
+                                    "approval.required" -> {
+                                        val id = approvalIdFrom(obj, p)
+                                        if (id != null) onApprovalRequired(id, approvalDescFrom(p))
                                     }
                                     "turn.completed", "turn.failed", "turn.interrupted" ->
                                         done = true
@@ -143,5 +207,30 @@ class DeepSeekClient(
             }
         }
         return lastSeq
+    }
+
+    private fun approvalIdFrom(obj: JsonObject, p: JsonObject?): String? {
+        if (p != null) {
+            p.get("approval_id")?.takeIf { it.isJsonPrimitive }?.let { return it.asString }
+            p.get("id")?.takeIf { it.isJsonPrimitive }?.let { return it.asString }
+            p.getAsJsonObject("approval")?.get("id")?.takeIf { it.isJsonPrimitive }
+                ?.let { return it.asString }
+        }
+        obj.get("approval_id")?.takeIf { it.isJsonPrimitive }?.let { return it.asString }
+        return null
+    }
+
+    private fun approvalDescFrom(p: JsonObject?): String {
+        if (p == null) return "tool"
+        val tool = p.getAsJsonObject("tool")
+        val name = p.get("tool_name")?.takeIf { it.isJsonPrimitive }?.asString
+            ?: p.get("name")?.takeIf { it.isJsonPrimitive }?.asString
+            ?: tool?.get("name")?.takeIf { it.isJsonPrimitive }?.asString
+            ?: "tool"
+        val input = p.get("tool_input")?.takeIf { it.isJsonPrimitive }?.asString
+            ?: p.get("input")?.toString()
+            ?: tool?.get("input")?.toString()
+        val trimmed = input?.take(300) ?: ""
+        return if (trimmed.isBlank()) name else "$name  $trimmed"
     }
 }
