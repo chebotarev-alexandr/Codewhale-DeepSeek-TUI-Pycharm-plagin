@@ -140,8 +140,10 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         }
     }
 
-    /** Re-measure a message pane so the bubble wraps at max width (and is
-     *  narrow for short text), then repaint. */
+    /**
+     * Re-measure a message pane so the bubble wraps at max width and grows to
+     * fit its content. MUST be called on the EDT.
+     */
     private fun applyPaneContent(msg: ChatMessage) {
         val pane = msg.pane ?: return
         val textColor = if (msg.role == "user") "#ffffff" else "#e8e8e8"
@@ -152,14 +154,15 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         pane.setSize(100000, Int.MAX_VALUE)
         val naturalW = pane.preferredSize.width.coerceAtLeast(1)
         val w = minOf(naturalW, bubbleMaxWidth())
-        // Now wrap at w to get the real height.
+        // Now wrap at w to get the real content height.
         pane.setSize(w, Int.MAX_VALUE)
         val h = pane.preferredSize.height
         pane.preferredSize = Dimension(w, h)
-        pane.maximumSize = Dimension(w, h)
+        pane.maximumSize = Dimension(w, Int.MAX_VALUE)
 
         msg.bubble?.let {
-            it.maximumSize = it.preferredSize
+            // Cap width only — height must be allowed to grow with content.
+            it.maximumSize = Dimension(it.preferredSize.width, Int.MAX_VALUE)
             it.revalidate()
         }
     }
@@ -187,7 +190,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
             isOpaque = false
             border = JBUI.Borders.empty(8, 12, 8, 12)
             add(pane, BorderLayout.CENTER)
-            maximumSize = preferredSize
+            maximumSize = Dimension(preferredSize.width, Int.MAX_VALUE)
         }
         return bubble
     }
@@ -207,7 +210,6 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
                 add(Box.createHorizontalGlue())
             }
         }
-        row.maximumSize = Dimension(Int.MAX_VALUE, row.preferredSize.height)
         row.alignmentX = Component.LEFT_ALIGNMENT
 
         chat.add(row)
@@ -222,10 +224,17 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         chat.repaint()
     }
 
-    private fun scrollToBottom() {
+    /** EDT-safe refresh: re-measure the bubble, re-layout, scroll to bottom. */
+    private fun refreshMessage(msg: ChatMessage) {
         SwingUtilities.invokeLater {
-            val bar = scrollPane.verticalScrollBar
-            bar.value = bar.maximum
+            applyPaneContent(msg)
+            chat.revalidate()
+            chat.repaint()
+            // Second pass after layout so the scrollbar maximum is fresh.
+            SwingUtilities.invokeLater {
+                val bar = scrollPane.verticalScrollBar
+                bar.value = bar.maximum
+            }
         }
     }
 
@@ -245,7 +254,10 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         addMessageRow(assistantMsg)
 
         promptField.text = ""
-        scrollToBottom()
+        SwingUtilities.invokeLater {
+            val bar = scrollPane.verticalScrollBar
+            bar.value = bar.maximum
+        }
 
         ApplicationManager.getApplication().executeOnPooledThread {
             setBusy(true)
@@ -254,9 +266,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
                     assistantMsg.content.append(
                         "⚠ Codewhale server not running. Start: `codewhale app-server --http --insecure-no-auth`"
                     )
-                    applyPaneContent(assistantMsg)
-                    chat.revalidate()
-                    chat.repaint()
+                    refreshMessage(assistantMsg)
                     return@executeOnPooledThread
                 }
 
@@ -271,33 +281,20 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
                     sinceSeq = lastSeq,
                     onAnswerDelta = { delta ->
                         assistantMsg.content.append(delta)
-                        applyPaneContent(assistantMsg)
-                        chat.revalidate()
-                        chat.repaint()
-                        scrollToBottom()
+                        refreshMessage(assistantMsg)
                     },
                     onReasoningDelta = { delta ->
                         assistantMsg.reasoning.append(delta)
-                        if (showThinking.isSelected) {
-                            applyPaneContent(assistantMsg)
-                            chat.revalidate()
-                            chat.repaint()
-                            scrollToBottom()
-                        }
+                        if (showThinking.isSelected) refreshMessage(assistantMsg)
                     },
                     onEvent = { event -> logRaw(event) },
                 )
-                applyPaneContent(assistantMsg)
-                chat.revalidate()
-                chat.repaint()
+                refreshMessage(assistantMsg)
             } catch (e: Exception) {
                 assistantMsg.content.append("\n\n⚠ Error: " + (e.message ?: ""))
-                applyPaneContent(assistantMsg)
-                chat.revalidate()
-                chat.repaint()
+                refreshMessage(assistantMsg)
             } finally {
                 setBusy(false)
-                scrollToBottom()
             }
         }
     }
