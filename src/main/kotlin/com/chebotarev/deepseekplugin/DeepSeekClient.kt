@@ -85,7 +85,10 @@ class DeepSeekClient(
             .post(body.toString().toRequestBody(json))
             .build()
         client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) throw RuntimeException("resolveApproval failed: HTTP ${resp.code}")
+            if (!resp.isSuccessful) {
+                val errBody = resp.body?.string() ?: ""
+                throw RuntimeException("resolveApproval failed: HTTP ${resp.code} $errBody")
+            }
         }
     }
 

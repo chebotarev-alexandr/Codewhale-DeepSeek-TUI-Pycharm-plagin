@@ -424,23 +424,31 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         val row = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
-            maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
             alignmentX = Component.LEFT_ALIGNMENT
         }
         row.add(label)
         row.add(bar)
+        row.maximumSize = Dimension(Int.MAX_VALUE, row.preferredSize.height)
 
         fun resolve(decision: String, remember: Boolean) {
             allow.isEnabled = false
             allowAll.isEnabled = false
             deny.isEnabled = false
-            label.text = if (decision == "allow") {
-                "<html><span style=\"color:#6ccb6c;\">✓ Разрешено</span></html>"
-            } else {
-                "<html><span style=\"color:#ff7b7b;\">✗ Запрещено</span></html>"
-            }
+            label.text = "<html><span style=\"color:#9aa4b2;\">⏳ Отправляю решение…</span></html>"
             ApplicationManager.getApplication().executeOnPooledThread {
-                runCatching { client.resolveApproval(approvalId, decision, remember) }
+                val result = runCatching { client.resolveApproval(approvalId, decision, remember) }
+                SwingUtilities.invokeLater {
+                    result.onSuccess {
+                        label.text = if (decision == "allow") {
+                            "<html><span style=\"color:#6ccb6c;\">✓ Разрешено</span></html>"
+                        } else {
+                            "<html><span style=\"color:#ff7b7b;\">✗ Запрещено</span></html>"
+                        }
+                    }.onFailure { err ->
+                        label.text = "<html><span style=\"color:#ff7b7b;\">⚠ Ошибка: " +
+                            escape(err.message ?: "неизвестно") + "</span></html>"
+                    }
+                }
             }
         }
         allow.addActionListener { resolve("allow", false) }
