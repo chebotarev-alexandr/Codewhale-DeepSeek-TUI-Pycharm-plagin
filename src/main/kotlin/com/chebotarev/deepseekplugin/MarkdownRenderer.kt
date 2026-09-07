@@ -25,8 +25,8 @@ object MarkdownRenderer {
             val lang = m.group(1).lowercase()
             val code = m.group(2)
             codeHtml.add(
-                "<pre style=\"background-color:#1e1e1e;color:#e8e8e8;padding:8px;margin:0;\"><code>" +
-                    highlight(code, lang) + "</code></pre>"
+                "<div style=\"background-color:#1e1e1e;color:#e8e8e8;padding:8px;margin:0;\">" +
+                    highlight(code, lang).replace("\n", "<br>") + "</div>"
             )
             sb.append("\u0000CODEBLOCK\u0000") // placeholder
             last = m.end()

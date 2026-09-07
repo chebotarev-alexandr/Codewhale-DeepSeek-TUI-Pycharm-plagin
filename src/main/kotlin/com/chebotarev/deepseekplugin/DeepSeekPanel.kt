@@ -158,7 +158,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private fun bubbleMaxWidth(): Int {
         val vw = scrollPane.viewport.width
-        return if (vw > 120) (vw * 0.78).toInt().coerceIn(260, 720) else 480
+        return if (vw > 120) (vw * 0.9).toInt().coerceIn(260, 720) else 480
     }
 
     private fun escape(s: String): String =
@@ -273,6 +273,13 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         chat.add(Box.createVerticalStrut(6))
         chat.revalidate()
         chat.repaint()
+        // Re-measure once the pane is in the live tree: the first measurement
+        // (before layout) under-sizes the bubble and wraps text too early.
+        SwingUtilities.invokeLater {
+            applyPaneContent(msg)
+            chat.revalidate()
+            chat.repaint()
+        }
     }
 
     private fun addSystemNote(text: String) {
