@@ -76,7 +76,8 @@ class DeepSeekClient(
     /**
      * Stream events for a thread over SSE. [onDelta] receives incremental
      * assistant text; [onEvent] receives every raw event JSON for logging.
-     * Blocks until the stream closes. Throws on connection failure.
+     * Returns when the turn reaches a terminal state (turn.completed /
+     * turn.failed / turn.interrupted) or the connection closes.
      */
     fun streamEvents(threadId: String, onDelta: (String) -> Unit, onEvent: (String) -> Unit) {
         val req = Request.Builder()
@@ -86,21 +87,31 @@ class DeepSeekClient(
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw RuntimeException("stream failed: HTTP ${resp.code}")
             resp.body?.let { body ->
-                body.byteStream().bufferedReader().forEachLine { line ->
+                val reader = body.byteStream().bufferedReader()
+                var line: String? = reader.readLine()
+                while (line != null) {
                     if (line.startsWith("data:")) {
                         val payload = line.removePrefix("data:").trim()
-                        if (payload.isEmpty() || payload == "[DONE]") return@forEachLine
-                        onEvent(payload)
-                        runCatching {
-                            val obj = JsonParser.parseString(payload).asJsonObject
-                            val event = obj.get("event")?.asString ?: ""
-                            val p = obj.getAsJsonObject("payload")
-                            if (event == "item.delta" || event == "item.started") {
-                                val delta = p?.get("delta")?.asString
-                                if (!delta.isNullOrEmpty()) onDelta(delta)
+                        if (!payload.isEmpty() && payload != "[DONE]") {
+                            onEvent(payload)
+                            var terminal = false
+                            runCatching {
+                                val obj = JsonParser.parseString(payload).asJsonObject
+                                val event = obj.get("event")?.asString ?: ""
+                                val p = obj.getAsJsonObject("payload")
+                                when (event) {
+                                    "item.delta", "item.started" -> {
+                                        val delta = p?.get("delta")?.asString
+                                        if (!delta.isNullOrEmpty()) onDelta(delta)
+                                    }
+                                    "turn.completed", "turn.failed", "turn.interrupted" ->
+                                        terminal = true
+                                }
                             }
+                            if (terminal) return@use
                         }
                     }
+                    line = reader.readLine()
                 }
             }
         }

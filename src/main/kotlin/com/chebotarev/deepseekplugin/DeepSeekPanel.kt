@@ -62,7 +62,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     private fun setBusy(busy: Boolean) {
-        promptField.isEnabled = !busy
+        SwingUtilities.invokeLater { promptField.isEnabled = !busy }
     }
 
     private fun send() {
