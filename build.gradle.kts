@@ -30,9 +30,9 @@ tasks {
 
     patchPluginXml {
         sinceBuild.set("241")
-        untilBuild.set("242.*")
+        // No untilBuild cap — allow installation on any newer IDE build.
         changeNotes.set("""
-            MVP: tool window + send open file/selection to DeepSeek-TUI runtime API.
+            MVP: tool window + send open file/selection to Codewhale runtime API.
         """.trimIndent())
     }
 }
