@@ -27,6 +27,7 @@ import javax.swing.JScrollPane
 import javax.swing.JTextPane
 import javax.swing.JTextField
 import javax.swing.SwingUtilities
+import javax.swing.text.View
 import javax.swing.text.html.HTMLEditorKit
 
 /**
@@ -42,6 +43,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         val attached: Boolean = false,
         var pane: JTextPane? = null,
         var bubble: JPanel? = null,
+        var row: JPanel? = null,
     )
 
     private val contextProvider = EditorContextProvider(project)
@@ -142,7 +144,9 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     /**
      * Re-measure a message pane so the bubble wraps at max width and grows to
-     * fit its content. MUST be called on the EDT.
+     * fit its content. MUST be called on the EDT. Uses the root view's spans
+     * directly — JEditorPane.getPreferredSize() returns stale (cached) sizes
+     * after setText, which is why bubbles were clipping.
      */
     private fun applyPaneContent(msg: ChatMessage) {
         val pane = msg.pane ?: return
@@ -150,19 +154,34 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         pane.text = "<html><body style=\"font-family:SansSerif;font-size:12pt;color:$textColor;\">" +
             messageBodyHtml(msg) + "</body></html>"
 
-        // Natural (unwrapped) width first.
-        pane.setSize(100000, Int.MAX_VALUE)
-        val naturalW = pane.preferredSize.width.coerceAtLeast(1)
-        val w = minOf(naturalW, bubbleMaxWidth())
-        // Now wrap at w to get the real content height.
-        pane.setSize(w, Int.MAX_VALUE)
-        val h = pane.preferredSize.height
-        pane.preferredSize = Dimension(w, h)
-        pane.maximumSize = Dimension(w, Int.MAX_VALUE)
+        val ins = pane.insets
+        val root = pane.ui.getRootView(pane)
+
+        // Natural (unwrapped) content width.
+        root.setSize(100000f, 100000f)
+        val naturalW = root.getPreferredSpan(View.X_AXIS).toInt().coerceAtLeast(1)
+
+        // Cap content width so the bubble stays within max width.
+        val maxContentW = (bubbleMaxWidth() - ins.left - ins.right).coerceAtLeast(60)
+        val contentW = minOf(naturalW, maxContentW)
+
+        // Wrapped content height at contentW.
+        root.setSize(contentW.toFloat(), 100000f)
+        val contentH = root.getPreferredSpan(View.Y_AXIS).toInt().coerceAtLeast(1)
+
+        val totalW = contentW + ins.left + ins.right
+        val totalH = contentH + ins.top + ins.bottom
+        pane.preferredSize = Dimension(totalW, totalH)
+        pane.maximumSize = Dimension(totalW, Int.MAX_VALUE)
 
         msg.bubble?.let {
-            // Cap width only — height must be allowed to grow with content.
             it.maximumSize = Dimension(it.preferredSize.width, Int.MAX_VALUE)
+            it.revalidate()
+        }
+        msg.row?.let {
+            // Cap height to preferred so the row doesn't stretch vertically,
+            // refreshed here as content grows.
+            it.maximumSize = Dimension(Int.MAX_VALUE, it.preferredSize.height)
             it.revalidate()
         }
     }
@@ -199,18 +218,12 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         val bubble = buildBubble(msg)
         msg.bubble = bubble
 
-        val row = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.X_AXIS)
+        val row = JPanel(BorderLayout()).apply {
             isOpaque = false
-            if (msg.role == "user") {
-                add(Box.createHorizontalGlue())
-                add(bubble)
-            } else {
-                add(bubble)
-                add(Box.createHorizontalGlue())
-            }
+            add(bubble, if (msg.role == "user") BorderLayout.EAST else BorderLayout.WEST)
         }
-        row.alignmentX = Component.LEFT_ALIGNMENT
+        msg.row = row
+        row.maximumSize = Dimension(Int.MAX_VALUE, row.preferredSize.height)
 
         chat.add(row)
         chat.add(Box.createVerticalStrut(6))
@@ -230,7 +243,6 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
             applyPaneContent(msg)
             chat.revalidate()
             chat.repaint()
-            // Second pass after layout so the scrollbar maximum is fresh.
             SwingUtilities.invokeLater {
                 val bar = scrollPane.verticalScrollBar
                 bar.value = bar.maximum
