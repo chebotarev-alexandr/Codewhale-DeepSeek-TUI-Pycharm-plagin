@@ -52,15 +52,16 @@ object MarkdownRenderer {
             if (i < codeHtml.size) codeHtml[i++] else ""
         }
 
-        return "<html><body style=\"font-family:SansSerif;font-size:12pt;\">" +
-            html + "</body></html>"
+        // Return a bare HTML fragment — the caller wraps it in <html><body>.
+        // (Returning a full document here caused a nested <html><body>, which
+        // broke the Swing HTML parser and truncated output at code blocks.)
+        return html
     }
 
-    /**
-     * Minimal keyword/string/comment/number highlighting for common languages.
-     * Input is raw code; output is HTML-escaped with <span> wrappers.
-     */
+    /** Minimal keyword/string/comment/number highlighting for common languages. */
     private fun highlight(code: String, lang: String): String {
+        if (lang == "diff" || lang == "patch") return highlightDiff(code)
+
         var escaped = code
             .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -97,5 +98,24 @@ object MarkdownRenderer {
         }
 
         return escaped
+    }
+
+    /** Line-oriented highlighting for git diff / patch blocks. */
+    private fun highlightDiff(code: String): String {
+        val lines = code.split("\n")
+        val sb = StringBuilder()
+        for ((idx, line) in lines.withIndex()) {
+            val esc = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            val color = when {
+                line.startsWith("+") && !line.startsWith("+++") -> "#6ccb6c"
+                line.startsWith("-") && !line.startsWith("---") -> "#ff7b7b"
+                line.startsWith("@@") -> "#569cd6"
+                else -> "#e8e8e8"
+            }
+            sb.append("<span style=\"color:").append(color).append(";\">")
+                .append(esc).append("</span>")
+            if (idx < lines.size - 1) sb.append("\n")
+        }
+        return sb.toString()
     }
 }
