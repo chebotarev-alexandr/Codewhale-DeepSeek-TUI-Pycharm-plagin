@@ -71,6 +71,10 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             isOpaque = false
             border = null
         }
+        override fun paintBorder(g: Graphics?) {
+            // No-op: suppress the focus rectangle on click — focus should just
+            // clear the placeholder, not draw a border around the field.
+        }
         override fun paintComponent(g: Graphics?) {
             super.paintComponent(g)
             if (text.isEmpty() && !isFocusOwner) {
@@ -78,7 +82,9 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
                 g2.color = Color(120, 124, 132)
                 val fm = g2.fontMetrics
-                g2.drawString(hint, insets.left, (height + fm.ascent - fm.descent) / 2)
+                val textH = fm.ascent + fm.descent
+                val y = (height - textH) / 2 + fm.ascent
+                g2.drawString(hint, insets.left + 2, y)
                 g2.dispose()
             }
         }
@@ -212,6 +218,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             setContentAreaFilled(false)
             border = null
             foreground = Color(232, 232, 232)
+            isFocusable = false
         }
 
         val right = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply {
