@@ -53,6 +53,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         var pane: JTextPane? = null,
         var bubble: JPanel? = null,
         var row: JPanel? = null,
+        var refreshPending: Boolean = false,
     )
 
     private class SlashCommand(val name: String, val desc: String, val action: () -> Unit)
@@ -149,6 +150,8 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
             }
         }
 
+        showThinking.addActionListener { reflowAll() }
+
         scrollPane.viewport.addComponentListener(object : ComponentAdapter() {
             override fun componentResized(e: ComponentEvent?) = reflowAll()
         })
@@ -197,12 +200,32 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         val sb = StringBuilder()
         sb.append("<b style=\"color:#9aa4b2;\">DeepSeek</b><br>")
         if (showThinking.isSelected && msg.reasoning.isNotEmpty()) {
-            sb.append("<div style=\"color:#888888;font-size:10pt;\">💭 ")
-                .append(escape(msg.reasoning.toString()))
-                .append("</div><br>")
+            sb.append(reasoningHtml(msg))
         }
         sb.append(MarkdownRenderer.render(msg.content.toString()))
         return sb.toString()
+    }
+
+    /**
+     * Renders the reasoning buffer as HTML, capped to a trailing window.
+     * Reasoning models stream tens of thousands of tokens of "thinking": the
+     * buffer can grow to hundreds of KB. Re-rendering the whole thing on every
+     * delta makes a single frame cost seconds and saturates the EDT, which is
+     * the freeze seen when "Show thinking" is on. Capping to a tail keeps each
+     * frame cheap while still showing the latest thinking.
+     */
+    private fun reasoningHtml(msg: ChatMessage): String {
+        val text = msg.reasoning.toString()
+        if (text.isEmpty()) return ""
+        val maxShown = 8000
+        val shown = if (text.length > maxShown) {
+            "… (скрыто " + (text.length - maxShown) + " симв., показан хвост)\n" +
+                text.substring(text.length - maxShown)
+        } else {
+            text
+        }
+        return "<div style=\"color:#888888;font-size:10pt;\">💭 " +
+            escape(shown).replace("\n", "<br>") + "</div><br>"
     }
 
     private fun applyPaneContent(msg: ChatMessage) {
@@ -307,7 +330,14 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     private fun refreshMessage(msg: ChatMessage) {
+        // Coalesce stream deltas: only one pending repaint per message. The
+        // stream callback fires per token (thousands per turn); without this
+        // every reasoning delta queues a full HTML re-render on the EDT, the
+        // queue grows faster than the EDT drains it, and the IDE freezes.
+        if (msg.refreshPending) return
+        msg.refreshPending = true
         SwingUtilities.invokeLater {
+            msg.refreshPending = false
             applyPaneContent(msg)
             chat.revalidate()
             chat.repaint()
