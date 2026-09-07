@@ -36,6 +36,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val attachFile = JCheckBox("Attach open file / selection", true)
     private var threadId: String? = null
+    private var lastSeq: Long = 0
 
     init {
         val top = JPanel(BorderLayout(4, 4)).apply {
@@ -90,12 +91,12 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
                 append("\n— You —\n$prompt\n\n— DeepSeek —\n")
 
                 client.sendTurn(tid, fullPrompt)
-                client.streamEvents(
+                lastSeq = client.streamEvents(
                     threadId = tid,
+                    sinceSeq = lastSeq,
                     onDelta = { append(it) },
                     onEvent = { /* raw event, ignored in MVP */ },
                 )
-                // The stream closes when the turn completes; then send the next turn.
                 append("\n")
             } catch (e: Exception) {
                 append("\n⚠ Error: ${e.message}\n\n")

@@ -74,29 +74,41 @@ class DeepSeekClient(
     }
 
     /**
-     * Stream events for a thread over SSE. [onDelta] receives incremental
-     * assistant text; [onEvent] receives every raw event JSON for logging.
-     * Returns when the turn reaches a terminal state (turn.completed /
-     * turn.failed / turn.interrupted) or the connection closes.
+     * Stream events for a thread over SSE, starting after [sinceSeq].
+     * [onDelta] receives incremental assistant text; [onEvent] receives every
+     * raw event JSON for logging.
+     *
+     * Returns the last seen sequence number (cursor). The caller should pass
+     * that value back as [sinceSeq] on the next call so history is not
+     * replayed. Stops when the current turn reaches a terminal state
+     * (turn.completed / turn.failed / turn.interrupted).
      */
-    fun streamEvents(threadId: String, onDelta: (String) -> Unit, onEvent: (String) -> Unit) {
+    fun streamEvents(
+        threadId: String,
+        sinceSeq: Long,
+        onDelta: (String) -> Unit,
+        onEvent: (String) -> Unit,
+    ): Long {
+        var lastSeq = sinceSeq
         val req = Request.Builder()
-            .url("$baseUrl/v1/threads/$threadId/events?since_seq=0")
+            .url("$baseUrl/v1/threads/$threadId/events?since_seq=$sinceSeq")
             .get()
             .build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw RuntimeException("stream failed: HTTP ${resp.code}")
             resp.body?.let { body ->
                 val reader = body.byteStream().bufferedReader()
+                var done = false
                 var line: String? = reader.readLine()
-                while (line != null) {
+                while (line != null && !done) {
                     if (line.startsWith("data:")) {
                         val payload = line.removePrefix("data:").trim()
                         if (!payload.isEmpty() && payload != "[DONE]") {
                             onEvent(payload)
-                            var terminal = false
                             runCatching {
                                 val obj = JsonParser.parseString(payload).asJsonObject
+                                val seq = obj.get("seq")?.asLong
+                                if (seq != null) lastSeq = seq
                                 val event = obj.get("event")?.asString ?: ""
                                 val p = obj.getAsJsonObject("payload")
                                 when (event) {
@@ -105,15 +117,15 @@ class DeepSeekClient(
                                         if (!delta.isNullOrEmpty()) onDelta(delta)
                                     }
                                     "turn.completed", "turn.failed", "turn.interrupted" ->
-                                        terminal = true
+                                        done = true
                                 }
                             }
-                            if (terminal) return@use
                         }
                     }
                     line = reader.readLine()
                 }
             }
         }
+        return lastSeq
     }
 }
