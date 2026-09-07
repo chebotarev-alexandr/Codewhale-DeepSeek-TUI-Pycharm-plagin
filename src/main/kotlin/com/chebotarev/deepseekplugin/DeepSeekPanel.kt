@@ -17,6 +17,7 @@ import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.Insets
 import java.awt.RenderingHints
 import java.awt.event.ActionEvent
 import java.awt.event.ComponentAdapter
@@ -69,6 +70,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
     private class PlaceholderTextField(private val hint: String) : JTextField() {
         init {
             isOpaque = false
+            background = Color(0, 0, 0, 0)
             border = null
         }
         override fun paintBorder(g: Graphics?) {
@@ -147,6 +149,8 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         caretColor = Color(232, 232, 232)
         selectionColor = Color(64, 128, 200)
         selectedTextColor = Color(255, 255, 255)
+        background = Color(0, 0, 0, 0)
+        margin = Insets(0, 8, 0, 0)
     }
 
     private var attachFileEnabled = true
@@ -200,6 +204,8 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
                 super.paintComponent(g)
                 val g2 = g!!.create() as Graphics2D
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = panelBg
+                g2.fillRoundRect(0, 0, width, height, 20, 20)
                 g2.color = Color(60, 60, 68)
                 g2.stroke = BasicStroke(1f)
                 g2.drawRoundRect(0, 0, width - 1, height - 1, 20, 20)
