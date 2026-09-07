@@ -158,7 +158,9 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private fun bubbleMaxWidth(): Int {
         val vw = scrollPane.viewport.width
-        return if (vw > 120) (vw * 0.9).toInt().coerceIn(260, 720) else 480
+        // Nearly the full viewport width (minus a small margin) so medium
+        // messages fit on one line instead of wrapping their last word.
+        return if (vw > 120) (vw - 12).coerceIn(200, 760) else 480
     }
 
     private fun escape(s: String): String =
@@ -214,7 +216,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         root.setSize(100000f, 100000f)
         val naturalW = root.getPreferredSpan(View.X_AXIS).toInt().coerceAtLeast(1)
         val maxContentW = (bubbleMaxWidth() - ins.left - ins.right).coerceAtLeast(60)
-        val contentW = minOf(naturalW, maxContentW)
+        val contentW = minOf(naturalW + 8, maxContentW)
         root.setSize(contentW.toFloat(), 100000f)
         val contentH = root.getPreferredSpan(View.Y_AXIS).toInt().coerceAtLeast(1)
 
@@ -433,7 +435,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         root.setSize(100000f, 100000f)
         val naturalW = root.getPreferredSpan(View.X_AXIS).toInt().coerceAtLeast(1)
         val maxContentW = (bubbleMaxWidth() - ins.left - ins.right).coerceAtLeast(60)
-        val contentW = minOf(naturalW, maxContentW)
+        val contentW = minOf(naturalW + 8, maxContentW)
         root.setSize(contentW.toFloat(), 100000f)
         val contentH = root.getPreferredSpan(View.Y_AXIS).toInt().coerceAtLeast(1)
         pane.preferredSize = Dimension(contentW + ins.left + ins.right, contentH + ins.top + ins.bottom)
