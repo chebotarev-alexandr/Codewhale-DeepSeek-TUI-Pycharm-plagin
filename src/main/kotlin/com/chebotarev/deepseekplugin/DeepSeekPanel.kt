@@ -81,9 +81,10 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
                 val g2 = g!!.create() as Graphics2D
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
                 g2.color = Color(120, 124, 132)
-                val fm = g2.fontMetrics
-                val textH = fm.ascent + fm.descent
-                val y = (height - textH) / 2 + fm.ascent
+                // Align with the field's real text baseline so the hint sits
+                // exactly where typed characters appear (vertically centered).
+                val baseline = getBaseline(width, height)
+                val y = if (baseline >= 0) baseline else (height + g2.fontMetrics.ascent) / 2
                 g2.drawString(hint, insets.left + 2, y)
                 g2.dispose()
             }
@@ -199,9 +200,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
                 super.paintComponent(g)
                 val g2 = g!!.create() as Graphics2D
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                g2.color = Color(47, 47, 52)
-                g2.fillRoundRect(0, 0, width, height, 20, 20)
-                g2.color = Color(66, 66, 74)
+                g2.color = Color(60, 60, 68)
                 g2.stroke = BasicStroke(1f)
                 g2.drawRoundRect(0, 0, width - 1, height - 1, 20, 20)
                 g2.dispose()
