@@ -25,8 +25,7 @@ object MarkdownRenderer {
             val lang = m.group(1).lowercase()
             val code = m.group(2)
             codeHtml.add(
-                "<pre style=\"background:#2b2b2b;color:#e8e8e8;padding:8px;" +
-                    "border-radius:4px;overflow:auto;\"><code>" +
+                "<pre style=\"background-color:#1e1e1e;color:#e8e8e8;padding:8px;margin:0;\"><code>" +
                     highlight(code, lang) + "</code></pre>"
             )
             sb.append("\u0000CODEBLOCK\u0000") // placeholder
@@ -38,12 +37,13 @@ object MarkdownRenderer {
         var html = sb.toString()
         html = html.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-        // 3. Inline formatting on escaped prose.
-        html = html.replace(Regex("`([^`]+)`"), "<code style=\"background:#f0f0f0;padding:1px 4px;border-radius:3px;\">$1</code>")
+        // 3. Inline formatting on escaped prose. Explicit colors everywhere so
+        // text stays visible on the fixed dark panel regardless of IDE theme.
+        html = html.replace(Regex("`([^`]+)`"), "<code style=\"color:#e6a23c;\">$1</code>")
         html = html.replace(Regex("\\*\\*([^*]+)\\*\\*"), "<b>$1</b>")
-        html = html.replace(Regex("(?m)^### (.+)$"), "<h4>$1</h4>")
-        html = html.replace(Regex("(?m)^## (.+)$"), "<h3>$1</h3>")
-        html = html.replace(Regex("(?m)^# (.+)$"), "<h2>$1</h2>")
+        html = html.replace(Regex("(?m)^### (.+)$"), "<h4 style=\"color:#e8e8e8;\">$1</h4>")
+        html = html.replace(Regex("(?m)^## (.+)$"), "<h3 style=\"color:#e8e8e8;\">$1</h3>")
+        html = html.replace(Regex("(?m)^# (.+)$"), "<h2 style=\"color:#e8e8e8;\">$1</h2>")
         html = html.replace("\n", "<br>")
 
         // 4. Substitute code blocks back in.
@@ -53,8 +53,6 @@ object MarkdownRenderer {
         }
 
         // Return a bare HTML fragment — the caller wraps it in <html><body>.
-        // (Returning a full document here caused a nested <html><body>, which
-        // broke the Swing HTML parser and truncated output at code blocks.)
         return html
     }
 

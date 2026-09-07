@@ -5,6 +5,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.event.ActionEvent
 import java.io.File
 import java.nio.file.Files
@@ -32,6 +33,11 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         isEditable = false
         editorKit = HTMLEditorKit()
         margin = JBUI.insets(8)
+        // Fixed dark terminal-style palette so text is always visible regardless
+        // of the IDE theme (the HTML uses light-on-dark colors to match).
+        background = Color(30, 30, 30)
+        foreground = Color(232, 232, 232)
+        caretColor = Color(232, 232, 232)
     }
 
     private val promptField = JTextField().apply {
@@ -130,7 +136,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
                             "</div>"
                     } else ""
                     setHtml(
-                        "<html><body style=\"font-family:SansSerif;font-size:12pt;\">" +
+                        "<html><body style=\"font-family:SansSerif;font-size:12pt;color:#e8e8e8;\">" +
                             "<b>Вы:</b> " + escape(prompt) + "<br><br>" +
                             reasonHtml +
                             "<b>DeepSeek:</b><br><br>" +
