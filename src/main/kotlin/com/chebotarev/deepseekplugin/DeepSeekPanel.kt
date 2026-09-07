@@ -281,21 +281,21 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
     }
 
     private fun showSettingsPopup(anchor: JComponent) {
-        val items = listOf(
-            makeToggleItem("Attach open file", attachFileEnabled),
-            makeToggleItem("Auto-approve", autoApproveEnabled),
-            makeToggleItem("Show thinking", showThinkingEnabled),
+        val labels = listOf(
+            (if (attachFileEnabled) "✓  " else "     ") + "Attach open file",
+            (if (autoApproveEnabled) "✓  " else "     ") + "Auto-approve",
+            (if (showThinkingEnabled) "✓  " else "     ") + "Show thinking",
         )
         val popup = JBPopupFactory.getInstance()
-            .createPopupChooserBuilder(items)
+            .createPopupChooserBuilder(labels)
             .setItemChosenCallback { chosen ->
-                when (chosen) {
-                    items[0] -> attachFileEnabled = !attachFileEnabled
-                    items[1] -> {
+                when (labels.indexOf(chosen)) {
+                    0 -> attachFileEnabled = !attachFileEnabled
+                    1 -> {
                         autoApproveEnabled = !autoApproveEnabled
                         onAutoApproveChanged()
                     }
-                    items[2] -> {
+                    2 -> {
                         showThinkingEnabled = !showThinkingEnabled
                         reflowAll()
                     }
@@ -304,9 +304,6 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             .createPopup()
         popup.showUnderneathOf(anchor)
     }
-
-    private fun makeToggleItem(label: String, checked: Boolean): JMenuItem =
-        JMenuItem(if (checked) "✓  $label" else "     $label")
 
     private fun onAutoApproveChanged() {
         val tid = threadId ?: return
