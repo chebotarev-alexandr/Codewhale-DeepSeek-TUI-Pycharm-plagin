@@ -10,23 +10,24 @@ import javax.swing.AbstractAction
 import javax.swing.JButton
 import javax.swing.JCheckBox
 import javax.swing.JPanel
-import javax.swing.JTextArea
+import javax.swing.JTextPane
 import javax.swing.JTextField
 import javax.swing.SwingUtilities
+import javax.swing.text.html.HTMLEditorKit
 
 /**
  * The plugin's tool-window UI: a prompt field, an optional "attach open file"
- * checkbox, a send button, and a read-only output area that streams the reply.
+ * checkbox, a send button, and a read-only output pane that renders the
+ * streaming reply (markdown + syntax-highlighted code).
  */
 class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val contextProvider = EditorContextProvider(project)
     private val client = DeepSeekClient()
 
-    private val output = JTextArea().apply {
+    private val output = JTextPane().apply {
         isEditable = false
-        lineWrap = true
-        wrapStyleWord = true
+        editorKit = HTMLEditorKit()
         margin = JBUI.insets(8)
     }
 
@@ -58,8 +59,8 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         promptField.addActionListener { send() }
     }
 
-    private fun append(text: String) {
-        SwingUtilities.invokeLater { output.append(text) }
+    private fun setHtml(text: String) {
+        SwingUtilities.invokeLater { output.text = text }
     }
 
     private fun setBusy(busy: Boolean) {
@@ -73,38 +74,56 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         // Build the context on the EDT (this method runs from a button/Enter),
         // because reading the editor selection/file requires EDT or a read action.
         val fullPrompt = contextProvider.buildPrompt(prompt, attachFile.isSelected)
+        val workspace = project.basePath
 
         ApplicationManager.getApplication().executeOnPooledThread {
             setBusy(true)
             try {
                 if (!client.isServerUp()) {
-                    append("\n⚠ Codewhale server not running.\n" +
-                        "Start it with:  codewhale app-server --http --insecure-no-auth\n\n")
+                    setHtml("<html><body>⚠ <b>Codewhale server not running.</b><br>" +
+                        "Start it with: <code>codewhale app-server --http --insecure-no-auth</code>" +
+                        "</body></html>")
                     return@executeOnPooledThread
                 }
 
                 if (threadId == null) {
-                    threadId = client.createThread(model = null)
+                    threadId = client.createThread(model = null, workspace = workspace)
                 }
                 val tid = threadId!!
 
-                append("\n— You —\n$prompt\n\n— DeepSeek —\n")
+                // Accumulate the raw markdown of this turn, render on the fly.
+                val markdown = StringBuilder()
+                val render = {
+                    setHtml(
+                        "<html><body style=\"font-family:SansSerif;font-size:12pt;\">" +
+                            "<b>Вы:</b> " + escape(prompt) + "<br><br>" +
+                            "<b>DeepSeek:</b><br><br>" +
+                            MarkdownRenderer.render(markdown.toString()) +
+                            "</body></html>"
+                    )
+                }
 
                 client.sendTurn(tid, fullPrompt)
                 lastSeq = client.streamEvents(
                     threadId = tid,
                     sinceSeq = lastSeq,
-                    onDelta = { append(it) },
+                    onDelta = { delta ->
+                        markdown.append(delta)
+                        render()
+                    },
                     onEvent = { /* raw event, ignored in MVP */ },
                 )
-                append("\n")
+                render()
             } catch (e: Exception) {
-                append("\n⚠ Error: ${e.message}\n\n")
+                setHtml("<html><body>⚠ <b>Error:</b> ${escape(e.message ?: "")}</body></html>")
             } finally {
                 setBusy(false)
             }
         }
     }
+
+    private fun escape(s: String): String =
+        s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     private inner class SendAction : AbstractAction("Send") {
         override fun actionPerformed(e: ActionEvent?) = send()

@@ -36,10 +36,18 @@ class DeepSeekClient(
 
     /**
      * Create a new thread. Returns the thread id, or throws on failure.
+     *
+     * [workspace] anchors the agent to the project root so file edits land in
+     * the right place. [autoApprove] is enabled so approval-gated tools (file
+     * writes, shell) run without an interactive approval UI, which the MVP
+     * panel does not yet implement.
      */
-    fun createThread(model: String?): String {
+    fun createThread(model: String?, workspace: String?, autoApprove: Boolean = true): String {
         val body = JsonObject()
         model?.let { body.addProperty("model", it) }
+        if (!workspace.isNullOrBlank()) body.addProperty("workspace", workspace)
+        body.addProperty("auto_approve", autoApprove)
+        body.addProperty("allow_shell", true)
         val req = Request.Builder()
             .url("$baseUrl/v1/threads")
             .post(body.toString().toRequestBody(json))
