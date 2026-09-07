@@ -121,14 +121,14 @@ class DeepSeekClient(
                                 val event = obj.get("event")?.asString ?: ""
                                 val p = obj.getAsJsonObject("payload")
                                 when (event) {
-                                    "item.delta", "item.started" -> {
+                                    "item.delta" -> {
                                         val delta = p?.get("delta")?.asString
-                                        val kind = p?.get("kind")?.asString ?: "agent_message"
+                                        val kind = p?.get("kind")?.asString ?: ""
                                         if (!delta.isNullOrEmpty()) {
-                                            if (kind == "reasoning") {
-                                                onReasoningDelta(delta)
-                                            } else {
-                                                onAnswerDelta(delta)
+                                            when (kind) {
+                                                "agent_reasoning" -> onReasoningDelta(delta)
+                                                "agent_message" -> onAnswerDelta(delta)
+                                                // tool_call / file_change / status carry no user-facing text
                                             }
                                         }
                                     }
