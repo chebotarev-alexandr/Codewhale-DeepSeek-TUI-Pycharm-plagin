@@ -16,7 +16,7 @@
         <toolWindow
             id="DeepSeek"
             anchor="right"
-            icon="AllIcons.Actions.Run_anything"
+            icon="/icons/codewhale.svg"
             factoryClass="com.chebotarev.deepseekplugin.DeepSeekToolWindowFactory"/>
     </extensions>
 </idea-plugin>

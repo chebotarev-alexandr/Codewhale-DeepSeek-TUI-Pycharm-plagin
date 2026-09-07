@@ -91,14 +91,21 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
                 }
                 val tid = threadId!!
 
-                // Accumulate the raw markdown of this turn, render on the fly.
-                val markdown = StringBuilder()
+                // Accumulate answer vs reasoning separately.
+                val answer = StringBuilder()
+                val reasoning = StringBuilder()
                 val render = {
+                    val reasonHtml = if (reasoning.isNotEmpty()) {
+                        "<div style=\"color:#888;font-size:10pt;\">" +
+                            "<b>💭 Thinking:</b><br>" + escape(reasoning.toString()) +
+                            "</div><br>"
+                    } else ""
                     setHtml(
                         "<html><body style=\"font-family:SansSerif;font-size:12pt;\">" +
                             "<b>Вы:</b> " + escape(prompt) + "<br><br>" +
+                            reasonHtml +
                             "<b>DeepSeek:</b><br><br>" +
-                            MarkdownRenderer.render(markdown.toString()) +
+                            MarkdownRenderer.render(answer.toString()) +
                             "</body></html>"
                     )
                 }
@@ -107,8 +114,12 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
                 lastSeq = client.streamEvents(
                     threadId = tid,
                     sinceSeq = lastSeq,
-                    onDelta = { delta ->
-                        markdown.append(delta)
+                    onAnswerDelta = { delta ->
+                        answer.append(delta)
+                        render()
+                    },
+                    onReasoningDelta = { delta ->
+                        reasoning.append(delta)
                         render()
                     },
                     onEvent = { /* raw event, ignored in MVP */ },

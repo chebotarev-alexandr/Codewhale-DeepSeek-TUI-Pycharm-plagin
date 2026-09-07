@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- water spout -->
+  <path fill="#4D6BFE" d="M8 1c-.4 0-.7.3-.7.7v1.4h1.4V1.7C8.7 1.3 8.4 1 8 1z"/>
+  <!-- body -->
+  <path fill="#4D6BFE" d="M2.8 8.7C2.8 5.5 4.9 3.6 8 3.6s5.2 1.9 5.2 5.1v1.9c0 1-.8 1.8-1.8 1.8H4.6c-1 0-1.8-.8-1.8-1.8V8.7z"/>
+  <!-- tail -->
+  <path fill="#4D6BFE" d="M13.2 8.6l2.3 2.3-1.4 1.4-2.1-2.1z"/>
+  <!-- eye -->
+  <circle cx="5.4" cy="8.4" r=".95" fill="#ffffff"/>
+</svg>

@@ -83,18 +83,19 @@ class DeepSeekClient(
 
     /**
      * Stream events for a thread over SSE, starting after [sinceSeq].
-     * [onDelta] receives incremental assistant text; [onEvent] receives every
-     * raw event JSON for logging.
+     * [onAnswerDelta] receives the assistant's actual answer text
+     * (payload.kind == "agent_message"). [onReasoningDelta] receives reasoning
+     * "thinking" text (payload.kind == "reasoning"), kept separate so the UI
+     * can show it collapsed. [onEvent] receives every raw event JSON.
      *
-     * Returns the last seen sequence number (cursor). The caller should pass
-     * that value back as [sinceSeq] on the next call so history is not
-     * replayed. Stops when the current turn reaches a terminal state
-     * (turn.completed / turn.failed / turn.interrupted).
+     * Returns the last seen sequence number (cursor). Stops when the current
+     * turn reaches a terminal state.
      */
     fun streamEvents(
         threadId: String,
         sinceSeq: Long,
-        onDelta: (String) -> Unit,
+        onAnswerDelta: (String) -> Unit,
+        onReasoningDelta: (String) -> Unit,
         onEvent: (String) -> Unit,
     ): Long {
         var lastSeq = sinceSeq
@@ -122,7 +123,14 @@ class DeepSeekClient(
                                 when (event) {
                                     "item.delta", "item.started" -> {
                                         val delta = p?.get("delta")?.asString
-                                        if (!delta.isNullOrEmpty()) onDelta(delta)
+                                        val kind = p?.get("kind")?.asString ?: "agent_message"
+                                        if (!delta.isNullOrEmpty()) {
+                                            if (kind == "reasoning") {
+                                                onReasoningDelta(delta)
+                                            } else {
+                                                onAnswerDelta(delta)
+                                            }
+                                        }
                                     }
                                     "turn.completed", "turn.failed", "turn.interrupted" ->
                                         done = true
