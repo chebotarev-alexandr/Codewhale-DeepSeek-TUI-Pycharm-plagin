@@ -1,0 +1,22 @@
+<idea-plugin>
+    <id>com.chebotarev.deepseek-tui-pycharm</id>
+    <name>DeepSeek-TUI PyCharm</name>
+    <vendor email="elips6102@gmail.com" url="https://github.com/chebotarev-alexandr">chebotarev-alexandr</vendor>
+
+    <description><![CDATA[
+        A minimal PyCharm panel that talks to a locally-running DeepSeek-TUI
+        (deepseek serve --http) and sends the currently open file / selection
+        as context along with your prompt.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.lang</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+            id="DeepSeek"
+            anchor="right"
+            icon="AllIcons.Actions.Run_anything"
+            factoryClass="com.chebotarev.deepseekplugin.DeepSeekToolWindowFactory"/>
+    </extensions>
+</idea-plugin>
