@@ -5,6 +5,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import java.awt.BasicStroke
@@ -29,7 +30,7 @@ import javax.swing.AbstractAction
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
-import javax.swing.JCheckBoxMenuItem
+import javax.swing.JComponent
 import javax.swing.JFileChooser
 import javax.swing.JLabel
 import javax.swing.JMenuItem
@@ -141,9 +142,9 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         selectedTextColor = Color(255, 255, 255)
     }
 
-    private val attachFile = JCheckBoxMenuItem("Attach open file", true)
-    private val autoApprove = JCheckBoxMenuItem("Auto-approve", true)
-    private val showThinking = JCheckBoxMenuItem("Show thinking", false)
+    private var attachFileEnabled = true
+    private var autoApproveEnabled = true
+    private var showThinkingEnabled = false
     private val attachmentLabel = JLabel(" ").apply {
         foreground = Color(154, 164, 178)
         isVisible = false
@@ -154,7 +155,6 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
     private var threadId: String? = null
     private var lastSeq: Long = 0
     private var slashPopup: JPopupMenu? = null
-    private var settingsPopup: JPopupMenu? = null
 
     private val rawLogFile: File =
         Paths.get(System.getProperty("user.home"), ".codewhale-events.log").toFile()
@@ -184,19 +184,9 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             border = null
             foreground = Color(154, 164, 178)
             isFocusable = false
+            font = font.deriveFont(18f)
         }
-        settingsButton.addActionListener {
-            settingsPopup?.show(settingsButton, 0, settingsButton.height)
-        }
-
-        settingsPopup = JPopupMenu().apply {
-            add(attachFile)
-            add(autoApprove)
-            add(showThinking)
-        }
-        attachFile.addActionListener { settingsPopup?.isVisible = false }
-        autoApprove.addActionListener { settingsPopup?.isVisible = false }
-        showThinking.addActionListener { settingsPopup?.isVisible = false }
+        settingsButton.addActionListener { showSettingsPopup(settingsButton) }
 
         val inputBox = object : JPanel(BorderLayout(0, 0)) {
             override fun paintComponent(g: Graphics?) {
@@ -255,15 +245,6 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             override fun changedUpdate(e: DocumentEvent?) = updateSlashPopup()
         })
 
-        autoApprove.addActionListener {
-            val tid = threadId ?: return@addActionListener
-            ApplicationManager.getApplication().executeOnPooledThread {
-                runCatching { client.patchAutoApprove(tid, autoApprove.isSelected) }
-            }
-        }
-
-        showThinking.addActionListener { reflowAll() }
-
         server.onStateChanged = { updateServerUI() }
         server.refresh()
 
@@ -299,6 +280,41 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         SwingUtilities.invokeLater { promptField.isEnabled = !busy }
     }
 
+    private fun showSettingsPopup(anchor: JComponent) {
+        val items = listOf(
+            makeToggleItem("Attach open file", attachFileEnabled),
+            makeToggleItem("Auto-approve", autoApproveEnabled),
+            makeToggleItem("Show thinking", showThinkingEnabled),
+        )
+        val popup = JBPopupFactory.getInstance()
+            .createPopupChooserBuilder(items)
+            .setItemChosenCallback { chosen ->
+                when (chosen) {
+                    items[0] -> attachFileEnabled = !attachFileEnabled
+                    items[1] -> {
+                        autoApproveEnabled = !autoApproveEnabled
+                        onAutoApproveChanged()
+                    }
+                    items[2] -> {
+                        showThinkingEnabled = !showThinkingEnabled
+                        reflowAll()
+                    }
+                }
+            }
+            .createPopup()
+        popup.showUnderneathOf(anchor)
+    }
+
+    private fun makeToggleItem(label: String, checked: Boolean): JMenuItem =
+        JMenuItem(if (checked) "✓  $label" else "     $label")
+
+    private fun onAutoApproveChanged() {
+        val tid = threadId ?: return
+        ApplicationManager.getApplication().executeOnPooledThread {
+            runCatching { client.patchAutoApprove(tid, autoApproveEnabled) }
+        }
+    }
+
     private fun updateServerUI() {
         val err = server.errorMessage
         serverDot.toolTipText = when (server.state) {
@@ -327,7 +343,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         }
         val sb = StringBuilder()
         sb.append("<b style=\"color:#9aa4b2;\">DeepSeek</b><br>")
-        if (showThinking.isSelected && msg.reasoning.isNotEmpty()) {
+        if (showThinkingEnabled && msg.reasoning.isNotEmpty()) {
             sb.append(reasoningHtml(msg))
         }
         sb.append(MarkdownRenderer.render(msg.content.toString()))
@@ -766,14 +782,14 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
 
         val attachedNames = pendingAttachments.map { it.first }
         val userText = buildUserPrompt(prompt)
-        val fullPrompt = contextProvider.buildPrompt(userText, attachFile.isSelected)
+        val fullPrompt = contextProvider.buildPrompt(userText, attachFileEnabled)
         val workspace = project.basePath
         pendingAttachments.clear()
         updateAttachmentLabel()
 
         val userMsg = ChatMessage(
             "user", StringBuilder(prompt),
-            attached = attachFile.isSelected,
+            attached = attachFileEnabled,
             attachments = attachedNames,
         )
         messages.add(userMsg)
@@ -802,7 +818,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
                     threadId = client.createThread(
                         model = null,
                         workspace = workspace,
-                        autoApprove = autoApprove.isSelected,
+                        autoApprove = autoApproveEnabled,
                     )
                 }
                 val tid = threadId!!
@@ -816,7 +832,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
                     },
                     onReasoningDelta = { delta ->
                         assistantMsg.reasoning.append(delta)
-                        if (showThinking.isSelected) refreshMessage(assistantMsg)
+                        if (showThinkingEnabled) refreshMessage(assistantMsg)
                     },
                     onApprovalRequired = { id, desc ->
                         SwingUtilities.invokeLater { addApprovalRow(id, desc) }
