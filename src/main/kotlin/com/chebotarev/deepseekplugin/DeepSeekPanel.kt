@@ -7,9 +7,11 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import java.awt.BasicStroke
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Graphics
@@ -18,6 +20,8 @@ import java.awt.RenderingHints
 import java.awt.event.ActionEvent
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -25,7 +29,7 @@ import javax.swing.AbstractAction
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
-import javax.swing.JCheckBox
+import javax.swing.JCheckBoxMenuItem
 import javax.swing.JFileChooser
 import javax.swing.JLabel
 import javax.swing.JMenuItem
@@ -61,15 +65,57 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
 
     private class SlashCommand(val name: String, val desc: String, val action: () -> Unit)
 
+    private class PlaceholderTextField(private val hint: String) : JTextField() {
+        init {
+            isOpaque = false
+            border = null
+        }
+        override fun paintComponent(g: Graphics?) {
+            super.paintComponent(g)
+            if (text.isEmpty() && !isFocusOwner) {
+                val g2 = g!!.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = Color(120, 124, 132)
+                val fm = g2.fontMetrics
+                g2.drawString(hint, insets.left, (height + fm.ascent - fm.descent) / 2)
+                g2.dispose()
+            }
+        }
+    }
+
     private val contextProvider = EditorContextProvider(project)
     private val client = DeepSeekClient()
 
     private val server = AppServerManager(client)
 
-    private val serverStatus = JLabel("○ сервер…").apply {
-        foreground = Color(154, 164, 178)
+    private val serverDot = object : JPanel() {
+        init {
+            isOpaque = false
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            preferredSize = Dimension(16, 20)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent?) {
+                    if (server.state == AppServerManager.State.EXTERNAL) return
+                    if (server.isRunning()) server.stop() else server.start()
+                }
+            })
+        }
+
+        override fun paintComponent(g: Graphics?) {
+            super.paintComponent(g)
+            val g2 = g!!.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.color = when (server.state) {
+                AppServerManager.State.RUNNING, AppServerManager.State.EXTERNAL -> Color(108, 203, 108)
+                AppServerManager.State.STARTING -> Color(230, 162, 60)
+                AppServerManager.State.STOPPED ->
+                    if (server.errorMessage != null) Color(255, 123, 123) else Color(120, 124, 132)
+            }
+            val d = 10
+            g2.fillOval((width - d) / 2, (height - d) / 2, d, d)
+            g2.dispose()
+        }
     }
-    private val serverToggle = JButton("Start server")
 
     private val panelBg = Color(30, 30, 30)
     private val userBg = Color(37, 99, 235)
@@ -87,13 +133,17 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         viewport.background = panelBg
     }
 
-    private val promptField = JTextField().apply {
+    private val promptField = PlaceholderTextField("Спроси агента или введи / …").apply {
         toolTipText = "Твой запрос. Введи / для списка команд."
+        foreground = Color(232, 232, 232)
+        caretColor = Color(232, 232, 232)
+        selectionColor = Color(64, 128, 200)
+        selectedTextColor = Color(255, 255, 255)
     }
 
-    private val attachFile = JCheckBox("Attach open file", true)
-    private val autoApprove = JCheckBox("Auto-approve", true)
-    private val showThinking = JCheckBox("Show thinking", false)
+    private val attachFile = JCheckBoxMenuItem("Attach open file", true)
+    private val autoApprove = JCheckBoxMenuItem("Auto-approve", true)
+    private val showThinking = JCheckBoxMenuItem("Show thinking", false)
     private val attachmentLabel = JLabel(" ").apply {
         foreground = Color(154, 164, 178)
         isVisible = false
@@ -104,6 +154,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
     private var threadId: String? = null
     private var lastSeq: Long = 0
     private var slashPopup: JPopupMenu? = null
+    private var settingsPopup: JPopupMenu? = null
 
     private val rawLogFile: File =
         Paths.get(System.getProperty("user.home"), ".codewhale-events.log").toFile()
@@ -116,36 +167,81 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
     )
 
     init {
-        val attachButton = JButton("📎 файл").apply {
+        val attachButton = JButton("📎").apply {
             toolTipText = "Прикрепить файл с диска (содержимое попадёт в контекст)"
+            isOpaque = false
+            setContentAreaFilled(false)
+            border = null
+            foreground = Color(154, 164, 178)
+            isFocusable = false
             addActionListener { pickFile() }
         }
 
-        val serverRow = JPanel(BorderLayout(4, 0)).apply {
+        val settingsButton = JButton("⚙").apply {
+            toolTipText = "Настройки"
             isOpaque = false
-            add(serverStatus, BorderLayout.CENTER)
-            add(serverToggle, BorderLayout.EAST)
+            setContentAreaFilled(false)
+            border = null
+            foreground = Color(154, 164, 178)
+            isFocusable = false
         }
-        val options = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
-            isOpaque = false
+        settingsButton.addActionListener {
+            settingsPopup?.show(settingsButton, 0, settingsButton.height)
+        }
+
+        settingsPopup = JPopupMenu().apply {
             add(attachFile)
             add(autoApprove)
             add(showThinking)
-            add(attachButton)
         }
-        val promptRow = JPanel(BorderLayout(4, 0)).apply {
+        attachFile.addActionListener { settingsPopup?.isVisible = false }
+        autoApprove.addActionListener { settingsPopup?.isVisible = false }
+        showThinking.addActionListener { settingsPopup?.isVisible = false }
+
+        val inputBox = object : JPanel(BorderLayout(0, 0)) {
+            override fun paintComponent(g: Graphics?) {
+                super.paintComponent(g)
+                val g2 = g!!.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = Color(47, 47, 52)
+                g2.fillRoundRect(0, 0, width, height, 20, 20)
+                g2.color = Color(66, 66, 74)
+                g2.stroke = BasicStroke(1f)
+                g2.drawRoundRect(0, 0, width - 1, height - 1, 20, 20)
+                g2.dispose()
+            }
+        }.apply {
             isOpaque = false
+            border = JBUI.Borders.empty(2, 10, 2, 10)
+            add(attachButton, BorderLayout.WEST)
             add(promptField, BorderLayout.CENTER)
-            add(JButton(SendAction()), BorderLayout.EAST)
+        }
+
+        val sendButton = JButton(SendAction()).apply {
+            isOpaque = false
+            setContentAreaFilled(false)
+            border = null
+            foreground = Color(232, 232, 232)
+        }
+
+        val right = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply {
+            isOpaque = false
+            add(settingsButton)
+            add(sendButton)
+        }
+
+        val promptRow = JPanel(BorderLayout(8, 0)).apply {
+            isOpaque = false
+            add(serverDot, BorderLayout.WEST)
+            add(inputBox, BorderLayout.CENTER)
+            add(right, BorderLayout.EAST)
         }
         val input = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
             border = JBUI.Borders.empty(8)
-            add(serverRow)
-            add(options)
-            add(attachmentLabel)
             add(promptRow)
+            add(attachmentLabel)
         }
 
         background = panelBg
@@ -168,9 +264,6 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
 
         showThinking.addActionListener { reflowAll() }
 
-        serverToggle.addActionListener {
-            if (server.isRunning()) server.stop() else server.start()
-        }
         server.onStateChanged = { updateServerUI() }
         server.refresh()
 
@@ -208,37 +301,15 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
 
     private fun updateServerUI() {
         val err = server.errorMessage
-        when (server.state) {
-            AppServerManager.State.STOPPED -> {
-                serverStatus.text = err ?: "○ сервер не запущен"
-                serverStatus.foreground =
-                    if (err != null) Color(255, 123, 123) else Color(154, 164, 178)
-                serverToggle.text = "Start server"
-                serverToggle.isEnabled = true
-                serverToggle.toolTipText = null
-            }
-            AppServerManager.State.STARTING -> {
-                serverStatus.text = "◌ запуск сервера…"
-                serverStatus.foreground = Color(230, 162, 60)
-                serverToggle.text = "Starting…"
-                serverToggle.isEnabled = false
-                serverToggle.toolTipText = null
-            }
-            AppServerManager.State.RUNNING -> {
-                serverStatus.text = "● сервер запущен (127.0.0.1:7878)"
-                serverStatus.foreground = Color(108, 203, 108)
-                serverToggle.text = "Stop server"
-                serverToggle.isEnabled = true
-                serverToggle.toolTipText = null
-            }
-            AppServerManager.State.EXTERNAL -> {
-                serverStatus.text = "● сервер запущен (внешний)"
-                serverStatus.foreground = Color(108, 203, 108)
-                serverToggle.text = "Stop server"
-                serverToggle.isEnabled = false
-                serverToggle.toolTipText = "Запущен вне плагина — останови вручную"
-            }
+        serverDot.toolTipText = when (server.state) {
+            AppServerManager.State.STOPPED ->
+                err ?: "Сервер не запущен — нажми, чтобы запустить"
+            AppServerManager.State.STARTING -> "Запуск сервера…"
+            AppServerManager.State.RUNNING ->
+                "Сервер запущен (127.0.0.1:7878) — нажми, чтобы остановить"
+            AppServerManager.State.EXTERNAL -> "Сервер запущен вне плагина"
         }
+        serverDot.repaint()
     }
 
     private fun messageBodyHtml(msg: ChatMessage): String {
