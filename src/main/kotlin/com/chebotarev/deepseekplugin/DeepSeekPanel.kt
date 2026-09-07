@@ -1,5 +1,6 @@
 package com.chebotarev.deepseekplugin
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBScrollPane
@@ -42,7 +43,7 @@ import javax.swing.text.html.HTMLEditorKit
  * right / blue, agent left / dark), input pinned to the bottom with slash
  * commands, file attachment, and approval-gated tool execution.
  */
-class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
+class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     private class ChatMessage(
         val role: String, // "user" or "assistant"
@@ -60,6 +61,13 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val contextProvider = EditorContextProvider(project)
     private val client = DeepSeekClient()
+
+    private val server = AppServerManager(client)
+
+    private val serverStatus = JLabel("○ сервер…").apply {
+        foreground = Color(154, 164, 178)
+    }
+    private val serverToggle = JButton("Start server")
 
     private val panelBg = Color(30, 30, 30)
     private val userBg = Color(37, 99, 235)
@@ -111,6 +119,11 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
             addActionListener { pickFile() }
         }
 
+        val serverRow = JPanel(BorderLayout(4, 0)).apply {
+            isOpaque = false
+            add(serverStatus, BorderLayout.CENTER)
+            add(serverToggle, BorderLayout.EAST)
+        }
         val options = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
             isOpaque = false
             add(attachFile)
@@ -127,6 +140,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
             border = JBUI.Borders.empty(8)
+            add(serverRow)
             add(options)
             add(attachmentLabel)
             add(promptRow)
@@ -151,6 +165,12 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         }
 
         showThinking.addActionListener { reflowAll() }
+
+        serverToggle.addActionListener {
+            if (server.isRunning()) server.stop() else server.start()
+        }
+        server.onStateChanged = { updateServerUI() }
+        server.refresh()
 
         scrollPane.viewport.addComponentListener(object : ComponentAdapter() {
             override fun componentResized(e: ComponentEvent?) = reflowAll()
@@ -182,6 +202,41 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private fun setBusy(busy: Boolean) {
         SwingUtilities.invokeLater { promptField.isEnabled = !busy }
+    }
+
+    private fun updateServerUI() {
+        val err = server.errorMessage
+        when (server.state) {
+            AppServerManager.State.STOPPED -> {
+                serverStatus.text = err ?: "○ сервер не запущен"
+                serverStatus.foreground =
+                    if (err != null) Color(255, 123, 123) else Color(154, 164, 178)
+                serverToggle.text = "Start server"
+                serverToggle.isEnabled = true
+                serverToggle.toolTipText = null
+            }
+            AppServerManager.State.STARTING -> {
+                serverStatus.text = "◌ запуск сервера…"
+                serverStatus.foreground = Color(230, 162, 60)
+                serverToggle.text = "Starting…"
+                serverToggle.isEnabled = false
+                serverToggle.toolTipText = null
+            }
+            AppServerManager.State.RUNNING -> {
+                serverStatus.text = "● сервер запущен (127.0.0.1:7878)"
+                serverStatus.foreground = Color(108, 203, 108)
+                serverToggle.text = "Stop server"
+                serverToggle.isEnabled = true
+                serverToggle.toolTipText = null
+            }
+            AppServerManager.State.EXTERNAL -> {
+                serverStatus.text = "● сервер запущен (внешний)"
+                serverStatus.foreground = Color(108, 203, 108)
+                serverToggle.text = "Stop server"
+                serverToggle.isEnabled = false
+                serverToggle.toolTipText = "Запущен вне плагина — останови вручную"
+            }
+        }
     }
 
     private fun messageBodyHtml(msg: ChatMessage): String {
@@ -577,10 +632,9 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
         ApplicationManager.getApplication().executeOnPooledThread {
             setBusy(true)
             try {
-                if (!client.isServerUp()) {
-                    assistantMsg.content.append(
-                        "⚠ Codewhale server not running. Start: `codewhale app-server --http --insecure-no-auth`"
-                    )
+                if (!server.ensureRunning()) {
+                    assistantMsg.content.append("⚠ Не удалось запустить Codewhale server.")
+                    server.errorMessage?.let { assistantMsg.content.append("\n").append(it) }
                     refreshMessage(assistantMsg)
                     return@executeOnPooledThread
                 }
@@ -631,5 +685,9 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private inner class SendAction : AbstractAction("SEND") {
         override fun actionPerformed(e: ActionEvent?) = send()
+    }
+
+    override fun dispose() {
+        server.stop()
     }
 }
