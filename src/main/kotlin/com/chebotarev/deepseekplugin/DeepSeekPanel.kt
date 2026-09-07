@@ -81,7 +81,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     private val attachFile = JCheckBox("Attach open file", true)
-    private val autoApprove = JCheckBox("Auto-approve", false)
+    private val autoApprove = JCheckBox("Auto-approve", true)
     private val showThinking = JCheckBox("Show thinking", false)
     private val attachmentLabel = JLabel(" ").apply {
         foreground = Color(154, 164, 178)

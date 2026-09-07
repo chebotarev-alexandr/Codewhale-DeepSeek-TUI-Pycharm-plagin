@@ -213,8 +213,10 @@ class DeepSeekClient(
         if (p != null) {
             p.get("approval_id")?.takeIf { it.isJsonPrimitive }?.let { return it.asString }
             p.get("id")?.takeIf { it.isJsonPrimitive }?.let { return it.asString }
-            p.getAsJsonObject("approval")?.get("id")?.takeIf { it.isJsonPrimitive }
-                ?.let { return it.asString }
+            p.getAsJsonObject("approval")?.let { ap ->
+                ap.get("id")?.takeIf { it.isJsonPrimitive }?.let { return it.asString }
+                ap.get("approval_id")?.takeIf { it.isJsonPrimitive }?.let { return it.asString }
+            }
         }
         obj.get("approval_id")?.takeIf { it.isJsonPrimitive }?.let { return it.asString }
         return null
@@ -227,10 +229,12 @@ class DeepSeekClient(
             ?: p.get("name")?.takeIf { it.isJsonPrimitive }?.asString
             ?: tool?.get("name")?.takeIf { it.isJsonPrimitive }?.asString
             ?: "tool"
-        val input = p.get("tool_input")?.takeIf { it.isJsonPrimitive }?.asString
+        val desc = p.get("description")?.takeIf { it.isJsonPrimitive }?.asString
+            ?: p.get("intent_summary")?.takeIf { it.isJsonPrimitive }?.asString
             ?: p.get("input")?.toString()
+            ?: p.get("tool_input")?.takeIf { it.isJsonPrimitive }?.asString
             ?: tool?.get("input")?.toString()
-        val trimmed = input?.take(300) ?: ""
+        val trimmed = desc?.take(300) ?: ""
         return if (trimmed.isBlank()) name else "$name  $trimmed"
     }
 }
