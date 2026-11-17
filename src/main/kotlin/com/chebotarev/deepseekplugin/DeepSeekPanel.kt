@@ -91,7 +91,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
 
         var onSend: (() -> Unit)? = null
 
-        private val maxRows = 5
+        private val maxRows = 20
         private val rowHeight: Int = getFontMetrics(font).height + 2
         private val spellHighlights = mutableListOf<Any>()
 
@@ -128,6 +128,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             selectionColor = Color(64, 128, 200)
             selectedTextColor = Color(255, 255, 255)
             margin = Insets(4, 6, 4, 0)
+            emptyText.text = hint
 
             // Enter sends; Shift+Enter inserts a line break. The default
             // "insert-break" binding is keyed to plain Enter, so rebind both.
@@ -145,17 +146,6 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
                 override fun removeUpdate(e: DocumentEvent?) = updateHeight()
                 override fun changedUpdate(e: DocumentEvent?) = updateHeight()
             })
-        }
-
-        override fun paintComponent(g: Graphics?) {
-            super.paintComponent(g)
-            if (text.isEmpty() && !isFocusOwner) {
-                val g2 = g!!.create() as Graphics2D
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                g2.color = Color(120, 124, 132)
-                g2.drawString(hint, insets.left + 2, insets.top + g2.fontMetrics.ascent)
-                g2.dispose()
-            }
         }
 
         /** Natural height of the wrapped content (uncapped). */
