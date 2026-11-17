@@ -52,8 +52,10 @@ import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 import javax.swing.text.Highlighter
 import javax.swing.text.JTextComponent
+import javax.swing.text.DefaultEditorKit
 import javax.swing.text.View
 import javax.swing.text.html.HTMLEditorKit
+import javax.swing.plaf.TextUI
 
 /**
  * Chat-style tool window: full conversation history as rounded bubbles (user
@@ -127,16 +129,21 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             selectedTextColor = Color(255, 255, 255)
             margin = Insets(4, 6, 4, 0)
 
-            // Enter sends; Shift+Enter falls through to the default insert-break.
+            // Enter sends; Shift+Enter inserts a line break. The default
+            // "insert-break" binding is keyed to plain Enter, so rebind both.
             inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "SEND_MESSAGE")
+            inputMap.put(
+                KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, KeyEvent.SHIFT_DOWN_MASK),
+                DefaultEditorKit.insertBreakAction,
+            )
             actionMap.put("SEND_MESSAGE", object : AbstractAction() {
                 override fun actionPerformed(e: ActionEvent?) { onSend?.invoke() }
             })
 
             document.addDocumentListener(object : DocumentListener {
-                override fun insertUpdate(e: DocumentEvent?) = refresh()
-                override fun removeUpdate(e: DocumentEvent?) = refresh()
-                override fun changedUpdate(e: DocumentEvent?) = refresh()
+                override fun insertUpdate(e: DocumentEvent?) = updateHeight()
+                override fun removeUpdate(e: DocumentEvent?) = updateHeight()
+                override fun changedUpdate(e: DocumentEvent?) = updateHeight()
             })
         }
 
@@ -151,21 +158,24 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             }
         }
 
-        /** Natural height of the current content (starts at 1 row). */
-        fun contentHeight(): Int =
-            lineCount.coerceAtLeast(1) * rowHeight + insets.top + insets.bottom
-
-        /** Height at which the field stops growing and starts scrolling. */
-        fun maxContentHeight(): Int =
-            maxRows * rowHeight + insets.top + insets.bottom
-
-        private fun refresh() {
-            val target = contentHeight()
-            if (preferredSize.height != target) {
-                preferredSize = Dimension(preferredSize.width, target)
-                revalidate()
+        /** Grow/shrink to the wrapped content, capped at [maxRows]. */
+        private fun updateHeight() {
+            SwingUtilities.invokeLater {
+                val target = if (text.isEmpty()) {
+                    rowHeight + insets.top + insets.bottom
+                } else {
+                    val root = (getUI() as TextUI).getRootView(this)
+                    root.setSize(width.coerceAtLeast(1).toFloat(), 100000f)
+                    val needed = root.getPreferredSpan(View.Y_AXIS).toInt().coerceAtLeast(rowHeight)
+                    val rows = ((needed + rowHeight - 1) / rowHeight).coerceIn(1, maxRows)
+                    rows * rowHeight + insets.top + insets.bottom
+                }
+                if (preferredSize.height != target) {
+                    preferredSize = Dimension(preferredSize.width, target)
+                    revalidate()
+                }
+                runSpellCheck()
             }
-            runSpellCheck()
         }
 
         private fun runSpellCheck() {
@@ -297,19 +307,6 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         }
         settingsButton.addActionListener { showSettingsPopup(settingsButton) }
 
-        val inputScroll = object : JBScrollPane(promptField) {
-            override fun getPreferredSize(): Dimension {
-                val natural = super.getPreferredSize()
-                return Dimension(natural.width, minOf(natural.height, promptField.maxContentHeight()))
-            }
-        }.apply {
-            border = null
-            isOpaque = false
-            viewport.isOpaque = false
-            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
-            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
-        }
-
         val inputBox = object : JPanel(BorderLayout(0, 0)) {
             override fun paintComponent(g: Graphics?) {
                 super.paintComponent(g)
@@ -326,7 +323,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             isOpaque = false
             border = JBUI.Borders.empty(2, 10, 2, 10)
             add(attachButton, BorderLayout.WEST)
-            add(inputScroll, BorderLayout.CENTER)
+            add(promptField, BorderLayout.CENTER)
         }
 
         val sendButton = object : JButton(SendAction()) {
