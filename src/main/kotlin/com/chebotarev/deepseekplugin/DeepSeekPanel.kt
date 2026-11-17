@@ -91,7 +91,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
 
         var onSend: (() -> Unit)? = null
 
-        private val maxRows = 4
+        private val maxRows = 5
         private val rowHeight: Int = getFontMetrics(font).height + 2
         private val spellHighlights = mutableListOf<Any>()
 
@@ -159,7 +159,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         }
 
         /** Natural height of the wrapped content (uncapped). */
-        private fun naturalHeight(): Int {
+        fun naturalHeight(): Int {
             if (text.isEmpty()) return rowHeight + insets.top + insets.bottom
             val root = (getUI() as TextUI).getRootView(this)
             root.setSize(width.coerceAtLeast(1).toFloat(), 100000f)
@@ -313,8 +313,11 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
 
         val inputScroll = object : JBScrollPane(promptField) {
             override fun getPreferredSize(): Dimension {
-                val natural = super.getPreferredSize()
-                return Dimension(natural.width, minOf(natural.height, promptField.maxHeight()))
+                // JTextArea.getPreferredScrollableViewportSize() returns a fixed
+                // ~one-line height, so super.getPreferredSize() never tracks the
+                // content — measure the field's natural height directly and cap.
+                val natural = promptField.naturalHeight()
+                return Dimension(super.getPreferredSize().width, minOf(natural, promptField.maxHeight()))
             }
         }.apply {
             border = null
