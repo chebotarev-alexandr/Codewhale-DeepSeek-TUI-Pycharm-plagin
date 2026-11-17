@@ -19,11 +19,14 @@ import java.awt.Component
 import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.GradientPaint
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Insets
+import java.awt.RadialGradientPaint
 import java.awt.RenderingHints
 import java.awt.Shape
+import java.awt.geom.Path2D
 import java.awt.event.ActionEvent
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
@@ -239,16 +242,56 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
     private val userBg = Color(37, 99, 235)
     private val agentBg = Color(44, 44, 44)
 
+    /** DeepSeek-style backdrop: deep-blue gradient, a soft glow, and faint waves. */
+    override fun paintComponent(g: Graphics?) {
+        val g2 = g!!.create() as Graphics2D
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        val w = width.toFloat()
+        val h = height.toFloat()
+
+        // Deep blue at the top melting into neutral dark.
+        g2.paint = GradientPaint(0f, 0f, Color(13, 26, 48), 0f, h, Color(28, 28, 31))
+        g2.fillRect(0, 0, width, height)
+
+        // Soft whale-blue glow toward the top.
+        g2.paint = RadialGradientPaint(
+            w / 2f, h * 0.2f, h * 0.75f,
+            floatArrayOf(0f, 1f),
+            arrayOf(Color(77, 107, 254, 24), Color(77, 107, 254, 0)),
+        )
+        g2.fillRect(0, 0, width, height)
+
+        // Faint ocean ripples near the bottom.
+        g2.color = Color(77, 107, 254, 11)
+        g2.stroke = BasicStroke(1.2f)
+        for (i in 0 until 3) {
+            drawWave(g2, (height - 20 - i * 22).toFloat(), 5f, 120f)
+        }
+        g2.dispose()
+    }
+
+    private fun drawWave(g2: Graphics2D, baseY: Float, amplitude: Float, wavelength: Float) {
+        val path = Path2D.Float()
+        path.moveTo(0f, baseY)
+        var x = 0f
+        while (x <= width) {
+            val y = baseY + (amplitude * Math.sin((x / wavelength) * 2.0 * Math.PI)).toFloat()
+            path.lineTo(x, y)
+            x += 3f
+        }
+        g2.draw(path)
+    }
+
     private val chat = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        isOpaque = true
-        background = panelBg
+        isOpaque = false
     }
 
     private val scrollPane = JBScrollPane(chat).apply {
         border = null
+        isOpaque = false
+        viewport.isOpaque = false
         horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
-        viewport.background = panelBg
     }
 
     private val promptField = ChatInputField(project, "Спроси агента или введи / …").apply {
@@ -371,13 +414,13 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         }
         val input = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            isOpaque = false
+            isOpaque = true
+            background = panelBg
             border = JBUI.Borders.empty(8)
             add(promptRow)
             add(attachmentLabel)
         }
 
-        background = panelBg
         add(scrollPane, BorderLayout.CENTER)
         add(input, BorderLayout.SOUTH)
 
