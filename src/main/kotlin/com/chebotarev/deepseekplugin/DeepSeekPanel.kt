@@ -51,6 +51,7 @@ import javax.swing.JTextPane
 import javax.swing.JTextField
 import javax.swing.KeyStroke
 import javax.swing.SwingUtilities
+import javax.swing.Timer
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 import javax.swing.text.Highlighter
@@ -77,6 +78,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         var bubble: JPanel? = null,
         var row: JPanel? = null,
         var refreshPending: Boolean = false,
+        var pending: Boolean = false,
     )
 
     private class SlashCommand(val name: String, val desc: String, val action: () -> Unit)
@@ -466,6 +468,34 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         SwingUtilities.invokeLater { promptField.isEnabled = !busy }
     }
 
+    // Animated "working" indicator shown in a pending assistant bubble so the
+    // user can tell the agent is running even with "Show thinking" off.
+    private var spinnerTimer: Timer? = null
+    private var spinnerFrame = 0
+
+    private fun startSpinner() {
+        if (spinnerTimer != null) return
+        spinnerTimer = Timer(350) {
+            spinnerFrame++
+            for (msg in messages) {
+                if (msg.pending) refreshMessage(msg)
+            }
+        }
+        spinnerTimer?.start()
+    }
+
+    private fun stopSpinner() {
+        spinnerTimer?.stop()
+        spinnerTimer = null
+    }
+
+    private fun spinnerHtml(): String {
+        val dots = (0 until 3).joinToString(" ") { i ->
+            if (i == spinnerFrame % 3) "●" else "○"
+        }
+        return "<span style=\"color:#9aa4b2;\">$dots</span> <span style=\"color:#7a8494;\">работаю…</span>"
+    }
+
     private fun showSettingsPopup(anchor: JComponent) {
         val labels = listOf(
             (if (attachFileEnabled) "✓  " else "     ") + "Attach open file",
@@ -529,7 +559,13 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         if (showThinkingEnabled && msg.reasoning.isNotEmpty()) {
             sb.append(reasoningHtml(msg))
         }
-        sb.append(MarkdownRenderer.render(msg.content.toString()))
+        if (msg.content.isNotEmpty()) {
+            sb.append(MarkdownRenderer.render(msg.content.toString()))
+        }
+        if (msg.pending) {
+            if (msg.content.isNotEmpty()) sb.append("<br>")
+            sb.append(spinnerHtml())
+        }
         return sb.toString()
     }
 
@@ -1179,9 +1215,10 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         messages.add(userMsg)
         addMessageRow(userMsg)
 
-        val assistantMsg = ChatMessage("assistant")
+        val assistantMsg = ChatMessage("assistant").apply { pending = true }
         messages.add(assistantMsg)
         addMessageRow(assistantMsg)
+        startSpinner()
 
         promptField.text = ""
         SwingUtilities.invokeLater {
@@ -1234,6 +1271,11 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
                 assistantMsg.content.append("\n\n⚠ Error: " + (e.message ?: ""))
                 refreshMessage(assistantMsg)
             } finally {
+                SwingUtilities.invokeLater {
+                    assistantMsg.pending = false
+                    stopSpinner()
+                    refreshMessage(assistantMsg)
+                }
                 setBusy(false)
             }
         }
