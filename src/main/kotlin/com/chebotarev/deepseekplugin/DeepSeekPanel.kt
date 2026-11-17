@@ -1,12 +1,16 @@
 package com.chebotarev.deepseekplugin
 
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.spellchecker.SpellCheckerManager
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import java.awt.BasicStroke
 import java.awt.BorderLayout
@@ -19,9 +23,11 @@ import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Insets
 import java.awt.RenderingHints
+import java.awt.Shape
 import java.awt.event.ActionEvent
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
+import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
@@ -40,9 +46,12 @@ import javax.swing.JPopupMenu
 import javax.swing.JScrollPane
 import javax.swing.JTextPane
 import javax.swing.JTextField
+import javax.swing.KeyStroke
 import javax.swing.SwingUtilities
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
+import javax.swing.text.Highlighter
+import javax.swing.text.JTextComponent
 import javax.swing.text.View
 import javax.swing.text.html.HTMLEditorKit
 
@@ -67,29 +76,124 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
 
     private class SlashCommand(val name: String, val desc: String, val action: () -> Unit)
 
-    private class PlaceholderTextField(private val hint: String) : JTextField() {
+    /**
+     * Multiline, auto-growing chat input. Pasted code wraps and expands the
+     * field (up to [maxRows], then the surrounding scroll pane scrolls), and a
+     * basic spell check underlines misspelled words. Enter sends, Shift+Enter
+     * inserts a line break.
+     */
+    private class ChatInputField(
+        private val project: Project,
+        private val hint: String,
+    ) : JBTextArea(3, 40) {
+
+        var onSend: (() -> Unit)? = null
+
+        private val maxRows = 10
+        private val rowHeight: Int = getFontMetrics(font).height + 2
+        private val spellHighlights = mutableListOf<Any>()
+
+        private val spellPainter = object : Highlighter.HighlightPainter {
+            override fun paint(g: Graphics, p0: Int, p1: Int, shape: Shape, c: JTextComponent) {
+                val rect = shape.bounds
+                if (rect.height <= 0 || rect.width <= 0) return
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = Color(255, 100, 100)
+                val bottom = rect.y + rect.height - 1
+                var x = rect.x
+                val step = 2
+                var up = true
+                while (x < rect.x + rect.width) {
+                    val y1 = if (up) bottom else bottom - 1
+                    val y2 = if (up) bottom - 1 else bottom
+                    g2.drawLine(x, y1, x + step, y2)
+                    x += step
+                    up = !up
+                }
+                g2.dispose()
+            }
+        }
+
         init {
             isOpaque = false
             background = Color(0, 0, 0, 0)
             border = null
+            lineWrap = true
+            wrapStyleWord = true
+            foreground = Color(232, 232, 232)
+            caretColor = Color(232, 232, 232)
+            selectionColor = Color(64, 128, 200)
+            selectedTextColor = Color(255, 255, 255)
+            margin = Insets(4, 6, 4, 0)
+
+            // Enter sends; Shift+Enter falls through to the default insert-break.
+            inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "SEND_MESSAGE")
+            actionMap.put("SEND_MESSAGE", object : AbstractAction() {
+                override fun actionPerformed(e: ActionEvent?) { onSend?.invoke() }
+            })
+
+            document.addDocumentListener(object : DocumentListener {
+                override fun insertUpdate(e: DocumentEvent?) = refresh()
+                override fun removeUpdate(e: DocumentEvent?) = refresh()
+                override fun changedUpdate(e: DocumentEvent?) = refresh()
+            })
         }
-        override fun paintBorder(g: Graphics?) {
-            // No-op: suppress the focus rectangle on click — focus should just
-            // clear the placeholder, not draw a border around the field.
-        }
+
         override fun paintComponent(g: Graphics?) {
             super.paintComponent(g)
             if (text.isEmpty() && !isFocusOwner) {
                 val g2 = g!!.create() as Graphics2D
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
                 g2.color = Color(120, 124, 132)
-                // Align with the field's real text baseline so the hint sits
-                // exactly where typed characters appear (vertically centered).
-                val baseline = getBaseline(width, height)
-                val y = if (baseline >= 0) baseline else (height + g2.fontMetrics.ascent) / 2
-                g2.drawString(hint, insets.left + 2, y)
+                g2.drawString(hint, insets.left + 2, insets.top + g2.fontMetrics.ascent)
                 g2.dispose()
             }
+        }
+
+        /** Natural height of the current content (floor of 2 rows). */
+        fun contentHeight(): Int =
+            lineCount.coerceAtLeast(2) * rowHeight + insets.top + insets.bottom
+
+        /** Height at which the field stops growing and starts scrolling. */
+        fun maxContentHeight(): Int =
+            maxRows * rowHeight + insets.top + insets.bottom
+
+        private fun refresh() {
+            val target = contentHeight()
+            if (preferredSize.height != target) {
+                preferredSize = Dimension(preferredSize.width, target)
+                revalidate()
+            }
+            runSpellCheck()
+        }
+
+        private fun runSpellCheck() {
+            val highlighter = highlighter
+            spellHighlights.forEach { highlighter.removeHighlight(it) }
+            spellHighlights.clear()
+            val manager = runCatching { SpellCheckerManager.getInstance(project) }.getOrNull() ?: return
+            val t = text
+            if (t.isEmpty()) return
+            for (m in Regex("\\p{L}+").findAll(t)) {
+                val word = m.value
+                if (!isCheckable(word)) continue
+                if (manager.hasProblem(word)) {
+                    runCatching {
+                        spellHighlights.add(
+                            highlighter.addHighlight(m.range.first, m.range.last + 1, spellPainter)
+                        )
+                    }
+                }
+            }
+        }
+
+        private fun isCheckable(word: String): Boolean {
+            if (word.length <= 2) return false
+            if (word.all { it.isUpperCase() }) return false
+            // Skip mixed-case identifiers / proper nouns (PyCharm, DeepSeek, camelCase).
+            if (word.drop(1).any { it.isUpperCase() }) return false
+            return true
         }
     }
 
@@ -143,14 +247,8 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         viewport.background = panelBg
     }
 
-    private val promptField = PlaceholderTextField("Спроси агента или введи / …").apply {
-        toolTipText = "Твой запрос. Введи / для списка команд."
-        foreground = Color(232, 232, 232)
-        caretColor = Color(232, 232, 232)
-        selectionColor = Color(64, 128, 200)
-        selectedTextColor = Color(255, 255, 255)
-        background = Color(0, 0, 0, 0)
-        margin = Insets(0, 8, 0, 0)
+    private val promptField = ChatInputField(project, "Спроси агента или введи / …").apply {
+        toolTipText = "Enter — отправить, Shift+Enter — новая строка. Введи / для команд."
     }
 
     private var attachFileEnabled = true
@@ -199,6 +297,19 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         }
         settingsButton.addActionListener { showSettingsPopup(settingsButton) }
 
+        val inputScroll = object : JBScrollPane(promptField) {
+            override fun getPreferredSize(): Dimension {
+                val natural = super.getPreferredSize()
+                return Dimension(natural.width, minOf(natural.height, promptField.maxContentHeight()))
+            }
+        }.apply {
+            border = null
+            isOpaque = false
+            viewport.isOpaque = false
+            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+        }
+
         val inputBox = object : JPanel(BorderLayout(0, 0)) {
             override fun paintComponent(g: Graphics?) {
                 super.paintComponent(g)
@@ -215,7 +326,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             isOpaque = false
             border = JBUI.Borders.empty(2, 10, 2, 10)
             add(attachButton, BorderLayout.WEST)
-            add(promptField, BorderLayout.CENTER)
+            add(inputScroll, BorderLayout.CENTER)
         }
 
         val sendButton = JButton(SendAction()).apply {
@@ -250,7 +361,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         add(scrollPane, BorderLayout.CENTER)
         add(input, BorderLayout.SOUTH)
 
-        promptField.addActionListener { send() }
+        promptField.onSend = { send() }
         promptField.document.addDocumentListener(object : DocumentListener {
             override fun insertUpdate(e: DocumentEvent?) = updateSlashPopup()
             override fun removeUpdate(e: DocumentEvent?) = updateSlashPopup()
@@ -776,6 +887,207 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         }
     }
 
+    // ---- user input dialogs ----
+
+    /**
+     * Renders a `request_user_input` prompt as an answerable bubble instead of
+     * raw JSON: each question shows its options as clickable buttons, plus a
+     * free-text field and a skip button. Answers are POSTed to
+     * /v1/user-input/{thread}/{input_id} and resume the paused turn.
+     */
+    private fun addUserInputRow(inputId: String, request: JsonObject) {
+        SwingUtilities.invokeLater {
+            val questions = runCatching { request.getAsJsonArray("questions") }.getOrNull()
+            if (questions == null || questions.isEmpty()) {
+                addSystemNote("⚠ Диалог с нестандартным форматом: " + request.toString().take(400))
+                return@invokeLater
+            }
+            val n = questions.size()
+            val qids = Array(n) { i -> questions.get(i).asJsonObject.get("id")?.asString ?: "q$i" }
+            val multi = BooleanArray(n) { i ->
+                questions.get(i).asJsonObject.get("multi_select")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
+            }
+            val selected = Array(n) { mutableListOf<String>() }
+            val freeText = arrayOfNulls<String>(n)
+            val skipped = BooleanArray(n)
+
+            fun answerJson(kind: String, qid: String, label: String, value: String): JsonObject {
+                val o = JsonObject()
+                o.addProperty("kind", kind)
+                o.addProperty("id", qid)
+                o.addProperty("label", label)
+                o.addProperty("value", value)
+                return o
+            }
+
+            val statusPane = JTextPane().apply {
+                editorKit = HTMLEditorKit()
+                isEditable = false
+                isOpaque = false
+                margin = JBUI.insets(2)
+            }
+            lateinit var controls: JPanel
+
+            var submitted = false
+            fun submit() {
+                if (submitted) return
+                submitted = true
+                val arr = JsonArray()
+                for (i in 0 until n) {
+                    when {
+                        skipped[i] -> arr.add(answerJson("skipped", qids[i], "", ""))
+                        freeText[i] != null -> arr.add(answerJson("custom", qids[i], "", freeText[i]!!))
+                        selected[i].isNotEmpty() -> selected[i].forEach {
+                            arr.add(answerJson("choice", qids[i], it, it))
+                        }
+                        else -> arr.add(answerJson("skipped", qids[i], "", ""))
+                    }
+                }
+                val tid = threadId
+                if (tid == null) {
+                    statusPane.text = "<html><body style=\"color:#ff7b7b;\">⚠ Нет активного диалога.</body></html>"
+                    return
+                }
+                controls.isEnabled = false
+                statusPane.text = "<html><body style=\"color:#e6a23c;\">Отправка…</body></html>"
+                ApplicationManager.getApplication().executeOnPooledThread {
+                    val result = runCatching { client.resolveUserInput(tid, inputId, arr) }
+                    SwingUtilities.invokeLater {
+                        statusPane.text = if (result.isSuccess) {
+                            "<html><body style=\"color:#6ccb6c;\">✓ Отвечено</body></html>"
+                        } else {
+                            "<html><body style=\"color:#ff7b7b;\">⚠ Ошибка: " +
+                                (result.exceptionOrNull()?.message ?: "неизвестно") + "</body></html>"
+                        }
+                    }
+                }
+            }
+
+            val body = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+            }
+
+            for (i in 0 until n) {
+                val q = questions.get(i).asJsonObject
+                val header = q.get("header")?.takeIf { it.isJsonPrimitive }?.asString
+                val questionText = q.get("question")?.takeIf { it.isJsonPrimitive }?.asString ?: ""
+                val detail = q.get("detail")?.takeIf { it.isJsonPrimitive }?.asString
+                val options = q.getAsJsonArray("options")
+
+                val html = StringBuilder()
+                if (!header.isNullOrBlank()) html.append("<b style=\"color:#9aa4b2;\">").append(escape(header)).append("</b><br>")
+                html.append("<span style=\"color:#e8e8e8;\">").append(escape(questionText)).append("</span>")
+                if (!detail.isNullOrBlank()) {
+                    html.append("<br><span style=\"color:#9aa4b2;font-size:10pt;\">").append(escape(detail)).append("</span>")
+                }
+                val qPane = JTextPane().apply {
+                    editorKit = HTMLEditorKit()
+                    isEditable = false
+                    isOpaque = false
+                    margin = JBUI.insets(2)
+                    text = "<html><body style=\"font-family:SansSerif;font-size:12pt;\">$html</body></html>"
+                }
+                body.add(qPane)
+
+                val optionBar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 4)).apply {
+                    isOpaque = false
+                    alignmentX = Component.LEFT_ALIGNMENT
+                }
+                if (options != null) {
+                    for (j in 0 until options.size()) {
+                        val opt = options.get(j).asJsonObject
+                        val label = opt.get("label")?.asString ?: continue
+                        val desc = opt.get("description")?.takeIf { it.isJsonPrimitive }?.asString
+                        val btn = JButton(label).apply {
+                            toolTipText = desc
+                            isFocusable = false
+                        }
+                        btn.addActionListener {
+                            if (multi[i]) {
+                                if (label in selected[i]) selected[i].remove(label) else selected[i].add(label)
+                                btn.text = if (label in selected[i]) "✓ $label" else label
+                            } else {
+                                selected[i].clear()
+                                selected[i].add(label)
+                                if (n == 1) submit()
+                            }
+                        }
+                        optionBar.add(btn)
+                    }
+                }
+                body.add(optionBar)
+
+                val freeRow = JPanel(BorderLayout(6, 0)).apply {
+                    isOpaque = false
+                    alignmentX = Component.LEFT_ALIGNMENT
+                }
+                val freeField = JTextField(24).apply { isOpaque = false }
+                val freeBtn = JButton("Ответить").apply { isFocusable = false }
+                val skipBtn = JButton("Пропустить").apply { isFocusable = false }
+                freeBtn.addActionListener {
+                    val v = freeField.text.trim()
+                    if (v.isEmpty()) return@addActionListener
+                    freeText[i] = v
+                    if (n == 1) submit()
+                }
+                skipBtn.addActionListener {
+                    skipped[i] = true
+                    if (n == 1) submit()
+                }
+                freeRow.add(freeField, BorderLayout.CENTER)
+                val right = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply { isOpaque = false }
+                right.add(freeBtn)
+                right.add(skipBtn)
+                freeRow.add(right, BorderLayout.EAST)
+                body.add(freeRow)
+
+                body.add(Box.createVerticalStrut(8))
+            }
+
+            controls = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+                add(body)
+                if (n > 1) {
+                    val confirm = JButton("Отправить ответ").apply { alignmentX = Component.LEFT_ALIGNMENT; isFocusable = false }
+                    confirm.addActionListener { submit() }
+                    add(confirm)
+                }
+                add(statusPane)
+            }
+
+            val bubble = object : JPanel(BorderLayout()) {
+                override fun paintComponent(g: Graphics?) {
+                    val g2 = g!!.create() as Graphics2D
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                    g2.color = Color(44, 44, 52)
+                    g2.fillRoundRect(0, 0, width, height, 16, 16)
+                    g2.dispose()
+                }
+            }.apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(8, 12, 8, 12)
+                add(controls, BorderLayout.CENTER)
+            }
+
+            val row = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                add(bubble, BorderLayout.WEST)
+            }
+            row.maximumSize = Dimension(Int.MAX_VALUE, row.preferredSize.height)
+
+            chat.add(row)
+            chat.add(Box.createVerticalStrut(6))
+            chat.revalidate()
+            chat.repaint()
+            SwingUtilities.invokeLater {
+                val bar = scrollPane.verticalScrollBar
+                bar.value = bar.maximum
+            }
+        }
+    }
+
     // ---- send ----
 
     private fun send() {
@@ -848,6 +1160,9 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
                     },
                     onFileChange = { path, detail, summary ->
                         addFileChangeRow(path, detail, summary)
+                    },
+                    onUserInputRequired = { inputId, request ->
+                        addUserInputRow(inputId, request)
                     },
                     onEvent = { event -> logRaw(event) },
                 )

@@ -1,5 +1,6 @@
 package com.chebotarev.deepseekplugin
 
+import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -105,6 +106,28 @@ class DeepSeekClient(
     }
 
     /**
+     * Answer a pending `request_user_input` prompt
+     * (POST /v1/user-input/{thread_id}/{input_id}).
+     *
+     * [answers] are `{"kind":...,"id":...,"label":...,"value":...}` objects built
+     * by the caller: `kind` is "choice", "custom" or "skipped".
+     */
+    fun resolveUserInput(threadId: String, inputId: String, answers: JsonArray) {
+        val body = JsonObject()
+        body.add("answers", answers)
+        val req = Request.Builder()
+            .url("$baseUrl/v1/user-input/$threadId/$inputId")
+            .post(body.toString().toRequestBody(json))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val errBody = resp.body?.string() ?: ""
+                throw RuntimeException("resolveUserInput failed: HTTP ${resp.code} $errBody")
+            }
+        }
+    }
+
+    /**
      * Undo the last turn: forks the thread with the last turn removed. Returns
      * the forked thread id (may differ from the original), or null if unknown.
      */
@@ -162,6 +185,8 @@ class DeepSeekClient(
         onReasoningDelta: (String) -> Unit,
         onApprovalRequired: (String, String) -> Unit,
         onFileChange: (path: String?, detail: String?, summary: String?) -> Unit = { _, _, _ -> },
+        onUserInputRequired: (inputId: String, request: JsonObject) -> Unit = { _, _ -> },
+        onUserInputAnswered: (inputId: String) -> Unit = { _ -> },
         onEvent: (String) -> Unit,
     ): Long {
         var lastSeq = sinceSeq
@@ -200,6 +225,19 @@ class DeepSeekClient(
                                     "approval.required" -> {
                                         val id = approvalIdFrom(obj, p)
                                         if (id != null) onApprovalRequired(id, approvalDescFrom(p))
+                                    }
+                                    "user_input.required" -> {
+                                        val inputId = p?.get("input_id")?.takeIf { it.isJsonPrimitive }?.asString
+                                            ?: p?.get("id")?.takeIf { it.isJsonPrimitive }?.asString
+                                        val request = p?.getAsJsonObject("request")
+                                        if (inputId != null && request != null) {
+                                            onUserInputRequired(inputId, request)
+                                        }
+                                    }
+                                    "user_input.answered", "user_input.canceled" -> {
+                                        val inputId = p?.get("input_id")?.takeIf { it.isJsonPrimitive }?.asString
+                                            ?: p?.get("id")?.takeIf { it.isJsonPrimitive }?.asString
+                                        if (inputId != null) onUserInputAnswered(inputId)
                                     }
                                     "item.completed" -> {
                                         val item = p?.getAsJsonObject("item")
