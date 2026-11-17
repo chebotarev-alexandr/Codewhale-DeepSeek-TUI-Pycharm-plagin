@@ -158,20 +158,24 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             }
         }
 
-        /** Grow/shrink to the wrapped content, capped at [maxRows]. */
+        /** Natural height of the wrapped content (uncapped). */
+        private fun naturalHeight(): Int {
+            if (text.isEmpty()) return rowHeight + insets.top + insets.bottom
+            val root = (getUI() as TextUI).getRootView(this)
+            root.setSize(width.coerceAtLeast(1).toFloat(), 100000f)
+            val needed = root.getPreferredSpan(View.Y_AXIS).toInt().coerceAtLeast(rowHeight)
+            return needed + insets.top + insets.bottom
+        }
+
+        /** Height cap — beyond this the surrounding scroll pane scrolls. */
+        fun maxHeight(): Int = maxRows * rowHeight + insets.top + insets.bottom
+
+        /** Keep the field's preferred height equal to its full content height. */
         private fun updateHeight() {
             SwingUtilities.invokeLater {
-                val target = if (text.isEmpty()) {
-                    rowHeight + insets.top + insets.bottom
-                } else {
-                    val root = (getUI() as TextUI).getRootView(this)
-                    root.setSize(width.coerceAtLeast(1).toFloat(), 100000f)
-                    val needed = root.getPreferredSpan(View.Y_AXIS).toInt().coerceAtLeast(rowHeight)
-                    val rows = ((needed + rowHeight - 1) / rowHeight).coerceIn(1, maxRows)
-                    rows * rowHeight + insets.top + insets.bottom
-                }
-                if (preferredSize.height != target) {
-                    preferredSize = Dimension(preferredSize.width, target)
+                val natural = naturalHeight()
+                if (preferredSize.height != natural) {
+                    preferredSize = Dimension(preferredSize.width, natural)
                     revalidate()
                 }
                 runSpellCheck()
@@ -307,6 +311,19 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         }
         settingsButton.addActionListener { showSettingsPopup(settingsButton) }
 
+        val inputScroll = object : JBScrollPane(promptField) {
+            override fun getPreferredSize(): Dimension {
+                val natural = super.getPreferredSize()
+                return Dimension(natural.width, minOf(natural.height, promptField.maxHeight()))
+            }
+        }.apply {
+            border = null
+            isOpaque = false
+            viewport.isOpaque = false
+            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+        }
+
         val inputBox = object : JPanel(BorderLayout(0, 0)) {
             override fun paintComponent(g: Graphics?) {
                 super.paintComponent(g)
@@ -323,7 +340,7 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             isOpaque = false
             border = JBUI.Borders.empty(2, 10, 2, 10)
             add(attachButton, BorderLayout.WEST)
-            add(promptField, BorderLayout.CENTER)
+            add(inputScroll, BorderLayout.CENTER)
         }
 
         val sendButton = object : JButton(SendAction()) {
