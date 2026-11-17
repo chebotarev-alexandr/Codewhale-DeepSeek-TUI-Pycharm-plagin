@@ -85,11 +85,11 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
     private class ChatInputField(
         private val project: Project,
         private val hint: String,
-    ) : JBTextArea(3, 40) {
+    ) : JBTextArea(1, 40) {
 
         var onSend: (() -> Unit)? = null
 
-        private val maxRows = 10
+        private val maxRows = 4
         private val rowHeight: Int = getFontMetrics(font).height + 2
         private val spellHighlights = mutableListOf<Any>()
 
@@ -151,9 +151,9 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             }
         }
 
-        /** Natural height of the current content (floor of 2 rows). */
+        /** Natural height of the current content (starts at 1 row). */
         fun contentHeight(): Int =
-            lineCount.coerceAtLeast(2) * rowHeight + insets.top + insets.bottom
+            lineCount.coerceAtLeast(1) * rowHeight + insets.top + insets.bottom
 
         /** Height at which the field stops growing and starts scrolling. */
         fun maxContentHeight(): Int =
@@ -329,18 +329,31 @@ class DeepSeekPanel(private val project: Project) : JPanel(BorderLayout()), Disp
             add(inputScroll, BorderLayout.CENTER)
         }
 
-        val sendButton = JButton(SendAction()).apply {
+        val sendButton = object : JButton(SendAction()) {
+            override fun paintComponent(g: Graphics?) {
+                val g2 = g!!.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = userBg
+                g2.fillRoundRect(0, 0, width, height, 16, 16)
+                g2.dispose()
+                super.paintComponent(g)
+            }
+        }.apply {
             isOpaque = false
             setContentAreaFilled(false)
-            border = null
-            foreground = Color(232, 232, 232)
+            border = JBUI.Borders.empty(6, 14, 6, 14)
+            foreground = Color(255, 255, 255)
             isFocusable = false
         }
 
-        val right = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply {
+        val rightButtons = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0)).apply {
             isOpaque = false
             add(settingsButton)
             add(sendButton)
+        }
+        val right = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(rightButtons, BorderLayout.SOUTH)
         }
 
         val promptRow = JPanel(BorderLayout(8, 0)).apply {
